@@ -1,0 +1,49 @@
+{
+  "548": {
+    "tags": [
+      "REGION_LOWER_BODY",
+      "SKILL_STRENGTH"
+    ],
+    "levels": {
+      "1": {
+        "exerciseId": "2"
+      },
+      "2": {
+        "exerciseId": "3"
+      },
+      "3": {
+        "exerciseId": "15"
+      }
+    }
+  },
+  "549": {
+    "tags": [
+      "SKILL_STRENGTH"
+    ],
+    "levels": {
+      "1": {
+        "exerciseId": "15"
+      },
+      "2": {
+        "exerciseId": "4"
+      }
+    }
+  },
+  "550": {
+    "tags": [
+      "REGION_UPPER_BODY"
+    ],
+    "levels": {
+      "1": {
+        "exerciseId": "5"
+      },
+      "2": {
+        "exerciseId": "-1"
+      }
+    }
+  },
+  "551": {
+    "tags": [],
+    "levels": {}
+  }
+}

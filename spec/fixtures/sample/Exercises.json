@@ -1,0 +1,422 @@
+[
+  {
+    "id": "999999",
+    "name": "Pause",
+    "displayName": "Pause",
+    "level": {
+      "m": 1,
+      "w": 1
+    },
+    "tags": [
+      "PAUSE"
+    ],
+    "isAdvanceByReps": false,
+    "isAdvanceByDuration": false,
+    "isJump": false,
+    "description": "Get ready for the next exercise",
+    "video": null,
+    "picture": null,
+    "otherSideExerciseId": null,
+    "values": null
+  },
+  {
+    "id": "1",
+    "name": "Dumbbell shoulder press level 1",
+    "displayName": "Shoulder press (1)",
+    "level": {
+      "m": 1,
+      "w": 1
+    },
+    "tags": [
+      "EQ_DUMBBELL",
+      "EQ_TYPE_WEIGHTS",
+      "EXERCISE_DIRECTION_VERTICAL_PUSH",
+      "MUSCLE_QUADRICEPS",
+      "PLACE_STUDIO",
+      "REGION_UPPER_BODY",
+      "SIDE_BOTH",
+      "SKILL_STABILITY_BODY"
+    ],
+    "isAdvanceByReps": false,
+    "isAdvanceByDuration": false,
+    "isJump": false,
+    "description": "Push the dumbbells over your head and lower them to shoulder height.",
+    "video": "exerciseVideos/1-video.mp4",
+    "picture": "exercisePictures/1-picture.jpg",
+    "otherSideExerciseId": null,
+    "values": {
+      "weight": {
+        "startValue": {
+          "default": {
+            "advanced": 40,
+            "beginner": 40
+          },
+          "m": {},
+          "w": {},
+          "k": {}
+        },
+        "targetValue": {
+          "default": {
+            "advanced": 50,
+            "beginner": 50
+          },
+          "m": {},
+          "w": {},
+          "k": {}
+        }
+      }
+    }
+  },
+  {
+    "id": "2",
+    "name": "Squat level 1",
+    "displayName": null,
+    "level": {
+      "m": 1,
+      "w": 1
+    },
+    "tags": [
+      "MUSCLE_QUADRICEPS",
+      "PLACE_HOME",
+      "REGION_LOWER_BODY",
+      "SKILL_STRENGTH"
+    ],
+    "isAdvanceByReps": false,
+    "isAdvanceByDuration": false,
+    "isJump": false,
+    "description": null,
+    "video": null,
+    "picture": null,
+    "otherSideExerciseId": null,
+    "values": null
+  },
+  {
+    "id": "3",
+    "conversionFactor": 0.8,
+    "name": "Barbell squat level 2",
+    "displayName": null,
+    "level": {
+      "m": 2,
+      "w": 2
+    },
+    "tags": [
+      "EQ_BARBELL",
+      "REGION_LOWER_BODY",
+      "SKILL_STRENGTH"
+    ],
+    "isAdvanceByReps": false,
+    "isAdvanceByDuration": false,
+    "isJump": false,
+    "description": null,
+    "video": null,
+    "picture": null,
+    "otherSideExerciseId": null,
+    "values": null
+  },
+  {
+    "id": "4",
+    "name": "Side plank left",
+    "displayName": null,
+    "level": {
+      "m": 1,
+      "w": 1
+    },
+    "tags": [
+      "REGION_CORE",
+      "SIDE_LEFT"
+    ],
+    "isAdvanceByReps": false,
+    "isAdvanceByDuration": false,
+    "isJump": false,
+    "description": null,
+    "video": null,
+    "picture": null,
+    "otherSideExerciseId": "5",
+    "values": null
+  },
+  {
+    "id": "5",
+    "name": "Side plank right",
+    "displayName": null,
+    "level": {
+      "m": 1,
+      "w": 1
+    },
+    "tags": [
+      "REGION_UPPER_BODY",
+      "SIDE_RIGHT"
+    ],
+    "isAdvanceByReps": false,
+    "isAdvanceByDuration": false,
+    "isJump": false,
+    "description": null,
+    "video": null,
+    "picture": null,
+    "otherSideExerciseId": "4",
+    "values": null
+  },
+  {
+    "id": "6",
+    "name": "Push-up level 2",
+    "displayName": null,
+    "level": {
+      "m": 1,
+      "w": 2
+    },
+    "tags": [
+      "REGION_UPPER_BODY"
+    ],
+    "isAdvanceByReps": false,
+    "isAdvanceByDuration": false,
+    "isJump": false,
+    "description": null,
+    "video": null,
+    "picture": null,
+    "otherSideExerciseId": "7",
+    "values": null
+  },
+  {
+    "id": "7",
+    "name": "Push-up level 4",
+    "displayName": null,
+    "level": {
+      "m": 2,
+      "w": 2
+    },
+    "tags": [
+      "REGION_UPPER_BODY"
+    ],
+    "isAdvanceByReps": false,
+    "isAdvanceByDuration": false,
+    "isJump": false,
+    "description": null,
+    "video": null,
+    "picture": null,
+    "otherSideExerciseId": null,
+    "values": null
+  },
+  {
+    "id": "8",
+    "name": "Dumbbell row",
+    "displayName": null,
+    "level": {
+      "m": 1,
+      "w": 1
+    },
+    "tags": [
+      "EQ_DUMBBELL",
+      "EQ_DUMBBELL",
+      "REGION_UPPER_BODY"
+    ],
+    "isAdvanceByReps": false,
+    "isAdvanceByDuration": false,
+    "isJump": false,
+    "description": null,
+    "video": null,
+    "picture": null,
+    "otherSideExerciseId": null,
+    "values": null
+  },
+  {
+    "id": "9",
+    "name": "Wall sit",
+    "displayName": null,
+    "level": {
+      "m": 1,
+      "w": 1
+    },
+    "tags": [
+      "REGION_UPPER_BODY"
+    ],
+    "isAdvanceByReps": false,
+    "isAdvanceByDuration": false,
+    "isJump": false,
+    "description": null,
+    "video": null,
+    "picture": null,
+    "otherSideExerciseId": null,
+    "values": {
+      "weight": {
+        "startValue": {
+          "default": {
+            "beginner": "2x 10 Sek."
+          }
+        },
+        "targetValue": {
+          "default": {
+            "beginner": 10
+          }
+        }
+      }
+    }
+  },
+  {
+    "id": "10",
+    "name": "Bench press",
+    "displayName": null,
+    "level": {
+      "m": 1,
+      "w": 1
+    },
+    "tags": [
+      "REGION_UPPER_BODY"
+    ],
+    "isAdvanceByReps": false,
+    "isAdvanceByDuration": false,
+    "isJump": false,
+    "description": null,
+    "video": null,
+    "picture": null,
+    "otherSideExerciseId": null,
+    "values": {
+      "weight": {
+        "startValue": {
+          "type": {
+            "type": "weightAbsolute"
+          },
+          "default": {
+            "beginner": 60
+          }
+        },
+        "targetValue": {
+          "default": {
+            "beginner": 50
+          }
+        }
+      }
+    }
+  },
+  {
+    "id": "11",
+    "name": "Pull-up",
+    "displayName": null,
+    "level": {
+      "m": 1,
+      "w": 1
+    },
+    "tags": [
+      "REGION_UPPER_BODY"
+    ],
+    "isAdvanceByReps": true,
+    "isAdvanceByDuration": false,
+    "isJump": false,
+    "description": null,
+    "video": null,
+    "picture": null,
+    "otherSideExerciseId": null,
+    "values": null
+  },
+  {
+    "id": "12",
+    "name": "Dead hang",
+    "displayName": null,
+    "level": {
+      "m": 1,
+      "w": 1
+    },
+    "tags": [
+      "REGION_UPPER_BODY"
+    ],
+    "isAdvanceByReps": false,
+    "isAdvanceByDuration": true,
+    "isJump": false,
+    "description": null,
+    "video": null,
+    "picture": null,
+    "otherSideExerciseId": null,
+    "values": null
+  },
+  {
+    "id": "13",
+    "name": "Bird dog",
+    "displayName": null,
+    "level": {
+      "m": 1,
+      "w": 1
+    },
+    "tags": [
+      "REGION_CORE"
+    ],
+    "isAdvanceByReps": false,
+    "isAdvanceByDuration": false,
+    "isJump": false,
+    "description": null,
+    "video": null,
+    "picture": null,
+    "otherSideExerciseId": null,
+    "values": null
+  },
+  {
+    "id": "14",
+    "name": "Box jump",
+    "displayName": null,
+    "level": {
+      "m": 1,
+      "w": 1
+    },
+    "tags": [
+      "REGION_UPPER_BODY"
+    ],
+    "isAdvanceByReps": false,
+    "isAdvanceByDuration": false,
+    "isJump": "no",
+    "description": null,
+    "video": null,
+    "picture": null,
+    "otherSideExerciseId": null,
+    "values": null
+  },
+  {
+    "id": "15",
+    "name": "Pistol squat",
+    "displayName": null,
+    "level": {
+      "m": 3,
+      "w": 3
+    },
+    "tags": [
+      "REGION_LOWER_BODY"
+    ],
+    "isAdvanceByReps": true,
+    "isAdvanceByDuration": false,
+    "isJump": false,
+    "description": null,
+    "video": null,
+    "picture": null,
+    "otherSideExerciseId": null,
+    "values": {
+      "repetition": {
+        "startValue": {
+          "default": {
+            "default": 8
+          }
+        },
+        "targetValue": {
+          "default": {
+            "default": 12
+          }
+        }
+      }
+    }
+  },
+  {
+    "id": "16",
+    "name": "Calf raise",
+    "displayName": null,
+    "level": {
+      "m": 1,
+      "w": 1
+    },
+    "tags": [
+      "REGION_LOWER_BODY"
+    ],
+    "isAdvanceByReps": false,
+    "isAdvanceByDuration": false,
+    "isJump": false,
+    "description": null,
+    "video": null,
+    "picture": null,
+    "otherSideExerciseId": null,
+    "values": null
+  }
+]

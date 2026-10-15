@@ -1,0 +1,10 @@
+{
+  "name": "coach-data-reviewer-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test \"spec/**/*.spec.js\"",
+    "test:real": "echo \"Real-data specs read CDR_DATA_DIR (default spec/fixtures/real/generator) and skip when it is missing. See spec/README.md.\" && node --test \"spec/**/*.spec.js\"",
+    "start": "node dev/serve.js"
+  }
+}

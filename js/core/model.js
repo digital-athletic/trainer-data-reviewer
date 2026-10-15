@@ -1,0 +1,287 @@
+import { DATA_TARGET_PATH } from './config.js';
+
+/**
+ * @typedef {Record<string, string>} RawFiles  path ("Exercises.json" or "skillTrees/SK.json") to raw text
+ * @typedef {Record<string, unknown>} Exercise
+ * @typedef {{ tags: string[], levels: Record<string, { exerciseId: string }> }} Branch
+ * @typedef {{ path: string, repoPath: string, kind: 'exercises' | 'skillTree', treeName?: string,
+ *   raw: string, data: unknown, trailingNewline: boolean }} FileEntry
+ * @typedef {{ tree: string, branchId: string, level: string }} BranchRef
+ * @typedef {{ exerciseById: Map<string, Exercise>, branchRefsByExerciseId: Map<string, BranchRef[]>,
+ *   otherSideRefsByExerciseId: Map<string, string[]>, treeOfBranch: Map<string, string>,
+ *   tagCounts: { exercise: Map<string, number>, branch: Map<string, number> } }} Index
+ * @typedef {{ files: Record<string, FileEntry>, exercises: Exercise[],
+ *   trees: Record<string, Record<string, Branch>>, treeNames: string[], index: Index,
+ *   loadMax: { exerciseId: number, branchId: number } }} Dataset
+ * @typedef {{ kind: 'exercise', id: string } | { kind: 'branch', tree: string, branchId: string }} Target
+ * @typedef {{ path: string[], message: string }} Violation
+ * @typedef {{ ok: true } | { ok: false, errors: Violation[] }} Result
+ * @typedef {{ path: string, repoPath: string, fileName: string, text: string }} ChangedFile
+ */
+
+export const REPO_BASE = `${DATA_TARGET_PATH}/`;
+export const EXERCISES = 'Exercises.json';
+export const PAUSE_ID = '999999';
+export const PAUSE_TAG = 'PAUSE';
+export const TAG_PREFIXES = Object.freeze([
+  'EQ_TYPE_', 'EXERCISE_DIRECTION_', 'MUSCLE_SECONDARY_', 'MUSCLE_INVOLVEMENT_', 'MUSCLE_',
+  'SEASON_PHASE_', 'REGION_', 'SKILL_', 'PLACE_', 'SIDE_', 'AGE_', 'PAIN_', 'EQ_'
+].sort((a, b) => b.length - a.length));
+
+const DIGITS = /^\d+$/;
+const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+/** True for a key that reaches the prototype chain. @param {unknown} key */
+export const isUnsafeKey = (key) => UNSAFE_KEYS.has(String(key));
+
+function assertSafePath(path) {
+  const bad = path.find(isUnsafeKey);
+  if (bad !== undefined) throw new Error(`The field name "${bad}" is not allowed.`);
+}
+
+/**
+ * "exercise:429", "branch:SKKG/979", or with a level "branch:SKKG/979:L3".
+ * @param {Target} target @param {string | number} [level] @returns {string}
+ */
+export const recordKeyOf = (target, level) =>
+  (target.kind === 'exercise' ? `exercise:${target.id}` : `branch:${target.tree}/${target.branchId}`) +
+  (level == null ? '' : `:L${level}`);
+
+/** The reverse of recordKeyOf, or null for an unknown shape. @param {string} key @returns {{ target: Target, level?: string } | null} */
+export function parseRecordKey(key) {
+  const m = /^(exercise|branch):(.*?)(?::L(\d))?$/.exec(String(key));
+  if (!m) return null;
+  const [, kind, rest, level] = m;
+  if (kind === 'exercise') return { target: { kind, id: rest }, level };
+  const cut = rest.lastIndexOf('/');
+  if (cut === -1) return null;
+  return { target: { kind, tree: rest.slice(0, cut), branchId: rest.slice(cut + 1) }, level };
+}
+
+// Parsed copies of the loaded raw texts, keyed by FileEntry. Never mutated.
+const originals = new WeakMap();
+
+/** @param {unknown} v @returns {v is Record<string, unknown>} */
+export const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+/** @param {unknown} a @param {unknown} b @returns {boolean} */
+export function deepEqual(a, b) {
+  if (a === b) return true;
+  if (typeof a !== typeof b || a === null || b === null || typeof a !== 'object') return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  if (Array.isArray(a)) return a.length === b.length && a.every((x, i) => deepEqual(x, b[i]));
+  const ka = Object.keys(a);
+  return ka.length === Object.keys(b).length && ka.every((k) => Object.hasOwn(b, k) && deepEqual(a[k], b[k]));
+}
+
+/** @template T @param {T} v @returns {T} */
+export const clone = (v) => (v === undefined ? undefined : structuredClone(v));
+
+function parseFile(path, text) {
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    throw new Error(`${path} is not valid JSON (${e.message}). Please pick an unchanged data folder.`);
+  }
+}
+
+/** @param {RawFiles} raw @returns {Dataset} Throws an Error with a plain message. */
+export function load(raw) {
+  if (typeof raw?.[EXERCISES] !== 'string') {
+    throw new Error(`Exercises.json is missing. Please pick ${DATA_TARGET_PATH}.`);
+  }
+  /** @type {Record<string, FileEntry>} */
+  const files = {};
+  const trees = {};
+  for (const [path, text] of Object.entries(raw)) {
+    const data = parseFile(path, text);
+    /** @type {FileEntry} */
+    const entry = {
+      path,
+      repoPath: REPO_BASE + path,
+      kind: path === EXERCISES ? 'exercises' : 'skillTree',
+      raw: text,
+      data,
+      trailingNewline: text.endsWith('\n')
+    };
+    if (entry.kind === 'exercises') {
+      if (!Array.isArray(data)) throw new Error('Exercises.json must hold a list of exercises.');
+    } else {
+      const match = /^skillTrees\/([^/]+)\.json$/.exec(path);
+      if (!match || isUnsafeKey(match[1])) throw new Error(`Unexpected file ${path}.`);
+      if (!isObject(data)) throw new Error(`${path} must hold an object of branches.`);
+      const [, treeName] = match;
+      entry.treeName = treeName;
+      trees[treeName] = data;
+    }
+    files[path] = entry;
+  }
+  /** @type {Dataset} */
+  const ds = {
+    files,
+    exercises: files[EXERCISES].data,
+    trees,
+    treeNames: Object.keys(trees).sort(),
+    index: null,
+    loadMax: { exerciseId: 0, branchId: 0 }
+  };
+  for (const ex of ds.exercises) {
+    if (typeof ex?.id !== 'string' || !DIGITS.test(ex.id)) continue;
+    const n = Number(ex.id);
+    if (n < Number(PAUSE_ID) && n > ds.loadMax.exerciseId) ds.loadMax.exerciseId = n;
+  }
+  for (const tree of ds.treeNames) {
+    for (const bid of Object.keys(trees[tree])) {
+      if (DIGITS.test(bid) && Number(bid) > ds.loadMax.branchId) ds.loadMax.branchId = Number(bid);
+    }
+  }
+  ds.index = buildIndex(ds);
+  return ds;
+}
+
+const pushTo = (map, key, value) => {
+  const list = map.get(key);
+  if (list) list.push(value);
+  else map.set(key, [value]);
+};
+
+/** @param {Dataset} ds @returns {Index} */
+export function buildIndex(ds) {
+  /** @type {Index} */
+  const index = {
+    exerciseById: new Map(),
+    branchRefsByExerciseId: new Map(),
+    otherSideRefsByExerciseId: new Map(),
+    treeOfBranch: new Map(),
+    tagCounts: { exercise: new Map(), branch: new Map() }
+  };
+  const count = (map, tags) => {
+    if (!Array.isArray(tags)) return;
+    for (const t of new Set(tags)) map.set(t, (map.get(t) ?? 0) + 1);
+  };
+  for (const ex of ds.exercises) {
+    index.exerciseById.set(ex.id, ex);
+    count(index.tagCounts.exercise, ex.tags);
+  }
+  for (const ex of ds.exercises) {
+    if (ex.otherSideExerciseId != null) pushTo(index.otherSideRefsByExerciseId, String(ex.otherSideExerciseId), ex.id);
+  }
+  for (const tree of ds.treeNames) {
+    for (const [bid, branch] of Object.entries(ds.trees[tree])) {
+      index.treeOfBranch.set(bid, tree);
+      count(index.tagCounts.branch, branch?.tags);
+      const levels = isObject(branch?.levels) ? branch.levels : {};
+      for (const [level, l] of Object.entries(levels)) {
+        if (l?.exerciseId == null) continue;
+        pushTo(index.branchRefsByExerciseId, String(l.exerciseId), { tree, branchId: bid, level });
+      }
+    }
+  }
+  return index;
+}
+
+/** @param {Dataset} ds @returns {{ exercises: number, trees: number, branches: number }} */
+export function stats(ds) {
+  const branches = ds.treeNames.reduce((sum, tree) => sum + Object.keys(ds.trees[tree]).length, 0);
+  return { exercises: ds.exercises.length, trees: ds.treeNames.length, branches };
+}
+
+/** FNV-1a, 32 bit, over every path and raw text in sorted path order. @param {Dataset} ds */
+export function fingerprint(ds) {
+  let h = 0x811c9dc5;
+  const feed = (s) => {
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+  };
+  for (const path of Object.keys(ds.files).sort()) {
+    feed(path);
+    feed('\u0000');
+    feed(ds.files[path].raw);
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+
+/** Undefined for a missing path or a path with an unsafe key. @param {unknown} obj @param {string[]} path */
+export function getAt(obj, path) {
+  let cur = obj;
+  for (const key of path) {
+    if (isUnsafeKey(key) || cur === null || typeof cur !== 'object' || !Object.hasOwn(cur, key)) return undefined;
+    cur = cur[key];
+  }
+  return cur;
+}
+
+/** @param {unknown} obj @param {string[]} path */
+export function hasAt(obj, path) {
+  if (path.length === 0) return true;
+  if (path.some(isUnsafeKey)) return false;
+  const parent = getAt(obj, path.slice(0, -1));
+  return parent !== null && typeof parent === 'object' && Object.hasOwn(parent, path.at(-1));
+}
+
+/**
+ * Writes in place and creates missing parents. Throws on an unsafe key.
+ * @param {Record<string, unknown> | unknown[]} obj @param {string[]} path @param {unknown} value
+ */
+export function setAt(obj, path, value) {
+  assertSafePath(path);
+  let cur = obj;
+  for (const key of path.slice(0, -1)) {
+    if (!Object.hasOwn(cur, key) || cur[key] === null || typeof cur[key] !== 'object') cur[key] = {};
+    cur = cur[key];
+  }
+  cur[path.at(-1)] = value;
+}
+
+/** Throws on an unsafe key. @param {unknown} obj @param {string[]} path */
+export function deleteAt(obj, path) {
+  assertSafePath(path);
+  const parent = getAt(obj, path.slice(0, -1));
+  if (parent === null || typeof parent !== 'object') return;
+  const key = path.at(-1);
+  if (Array.isArray(parent)) parent.splice(Number(key), 1);
+  else delete parent[key];
+}
+
+/** The parsed loaded text of a file, never mutated. @param {Dataset} ds @param {string} path */
+export function originalData(ds, path) {
+  const entry = ds.files[path];
+  if (!entry) return undefined;
+  if (!originals.has(entry)) originals.set(entry, JSON.parse(entry.raw));
+  return originals.get(entry);
+}
+
+/** @param {Dataset} ds @param {string} path @returns {string} */
+export function serializeFile(ds, path) {
+  const entry = ds.files[path];
+  const text = JSON.stringify(entry.data, null, 2) + (entry.trailingNewline ? '\n' : '');
+  if (text === entry.raw || deepEqual(entry.data, originalData(ds, path))) return entry.raw;
+  return text;
+}
+
+function orderedPaths(ds) {
+  const paths = Object.keys(ds.files).filter((p) => p !== EXERCISES).sort();
+  return ds.files[EXERCISES] ? [EXERCISES, ...paths] : paths;
+}
+
+/** @param {Dataset} ds @returns {ChangedFile[]} */
+export function changedFiles(ds) {
+  return orderedPaths(ds).flatMap((path) => {
+    const entry = ds.files[path];
+    const text = serializeFile(ds, path);
+    return text === entry.raw ? [] : [{ path, repoPath: entry.repoPath, fileName: path.split('/').at(-1), text }];
+  });
+}
+
+/** @param {string} tag @returns {string} */
+export function tagPrefix(tag) {
+  const known = TAG_PREFIXES.find((p) => tag.startsWith(p));
+  if (known) return known;
+  const cut = tag.indexOf('_');
+  return cut === -1 ? tag : tag.slice(0, cut + 1);
+}
+
+/** @param {Exercise} ex @returns {string} */
+export const exerciseLabel = (ex) => ex.displayName ?? ex.name;

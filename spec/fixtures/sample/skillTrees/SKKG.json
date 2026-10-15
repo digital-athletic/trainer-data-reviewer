@@ -1,0 +1,72 @@
+{
+  "253": {
+    "tags": [
+      "REGION_UPPER_BODY",
+      "SKILL_STABILITY_BODY"
+    ],
+    "levels": {
+      "1": {
+        "exerciseId": "1"
+      },
+      "2": {
+        "exerciseId": "6"
+      },
+      "4": {
+        "exerciseId": "7"
+      }
+    }
+  },
+  "254": {
+    "tags": [
+      "REGION_UPPER_BODY"
+    ],
+    "levels": {
+      "2": {
+        "exerciseId": "8"
+      },
+      "3": {
+        "exerciseId": "9"
+      }
+    }
+  },
+  "255": {
+    "tags": [
+      "REGION_UPPER_BODY"
+    ],
+    "levels": {
+      "1": {
+        "exerciseId": "10"
+      },
+      "2": {
+        "exerciseId": "11"
+      },
+      "3": {
+        "exerciseId": "12"
+      },
+      "4": {
+        "exerciseId": "14"
+      }
+    }
+  },
+  "256": {
+    "tags": [
+      "REGION_UPPER_BODY",
+      "REGION_UPPER_BODY"
+    ],
+    "levels": {
+      "1": {
+        "exerciseId": "777777"
+      }
+    }
+  },
+  "257": {
+    "tags": [
+      "REGION_UPPER_BODY"
+    ],
+    "levels": {
+      "1": {
+        "exerciseId": "16"
+      }
+    }
+  }
+}
