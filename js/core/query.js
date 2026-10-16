@@ -1,4 +1,4 @@
-import { PAUSE_ID, exerciseLabel, tagPrefix } from './model.js';
+import { PAUSE_ID, TAG_GROUPS, exerciseLabel, tagPrefix } from './model.js';
 
 /**
  * @typedef {import('./model.js').Dataset} Dataset
@@ -10,8 +10,17 @@ import { PAUSE_ID, exerciseLabel, tagPrefix } from './model.js';
  *   hasDescription?: boolean | null }} Criteria
  */
 
-const FACET_PREFIX = { skill: 'SKILL_', region: 'REGION_', eq: 'EQ_', place: 'PLACE_' };
-const TAG_FACETS = Object.keys(FACET_PREFIX);
+const TAG_FACETS = ['skill', 'region', 'eq', 'place'];
+/**
+ * The tag prefix each tag filter of the exercises table selects by. A filter key is its
+ * TAG_GROUPS prefix in lowercase without the trailing underscore: skill selects SKILL_.
+ */
+export const FACET_PREFIX = Object.freeze(Object.fromEntries(TAG_GROUPS
+  .map(({ prefix }) => [prefix.slice(0, -1).toLowerCase(), prefix])
+  .filter(([key]) => TAG_FACETS.includes(key))));
+
+/** The lowercase id, name and display name a text search matches. @param {import('./model.js').Exercise} ex */
+export const haystack = (ex) => [ex.id, ex.name, ex.displayName].filter((s) => s != null).join(' ').toLowerCase();
 
 /** @param {Dataset} ds @returns {Row[]} */
 export function buildRows(ds) {
@@ -29,7 +38,7 @@ export function buildRows(ds) {
       branchCount: branches.size,
       hasVideo: typeof ex.video === 'string' && ex.video !== '',
       hasDescription: typeof ex.description === 'string' && ex.description.trim() !== '',
-      haystack: [ex.id, ex.name, ex.displayName].filter((s) => s != null).join(' ').toLowerCase(),
+      haystack: haystack(ex),
       tagSet: new Set(Array.isArray(ex.tags) ? ex.tags : [])
     };
   });

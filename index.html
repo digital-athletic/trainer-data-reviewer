@@ -1,55 +1,56 @@
 <!doctype html>
-<html lang="en">
+<html lang="de">
 <head>
   <meta charset="utf-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Coach data reviewer</title>
+  <title>Übungskatalog-Prüfung</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="./css/app.css">
   <link rel="stylesheet" href="./css/exercises.css">
   <script type="module" src="./js/ui/main.js"></script>
 </head>
 <body>
-  <a class="skip-link" href="#main">Skip to content</a>
+  <a class="skip-link" href="#main" data-i18n="static.skip">Zum Inhalt springen</a>
 
   <header class="app-header" id="app-header" hidden>
     <div class="app-header__top">
       <div class="brand">
-        <span class="brand__name">Coach data reviewer</span>
+        <span class="brand__name" data-i18n="app.name">Übungskatalog-Prüfung</span>
         <span class="brand__meta" id="dataset-line"></span>
       </div>
       <div class="app-header__actions">
         <span class="badge badge--count" id="change-badge" aria-live="polite"></span>
-        <button type="button" class="btn btn--ghost" id="undo-btn" title="Undo the last change (Ctrl+Z)">Undo</button>
+        <button type="button" class="btn btn--ghost" id="undo-btn" data-i18n="header.undo" data-i18n-title="header.undoTitle" title="Letzte Änderung rückgängig machen (Strg+Z)">Rückgängig</button>
         <details class="menu" id="work-menu">
-          <summary class="btn">Work file</summary>
-          <div class="menu__panel" role="group" aria-label="Work file">
+          <summary class="btn" data-i18n="header.workFile">Arbeitsdatei</summary>
+          <div class="menu__panel" role="group" aria-label="Arbeitsdatei" data-i18n-label="header.workFile">
             <p class="menu__note" id="work-menu-note"></p>
-            <button type="button" class="btn btn--block" id="work-save-btn">Save work file</button>
-            <button type="button" class="btn btn--block" id="work-open-btn">Open work file</button>
+            <button type="button" class="btn btn--block" id="work-save-btn" data-i18n="header.workSave">Arbeitsdatei speichern</button>
+            <button type="button" class="btn btn--block" id="work-open-btn" data-i18n="header.workOpen">Arbeitsdatei öffnen</button>
             <hr class="menu__rule">
-            <button type="button" class="btn btn--ghost btn--block" id="folder-again-btn">Choose another data folder</button>
+            <button type="button" class="btn btn--ghost btn--block" id="exercises-again-btn" data-i18n="header.exercisesAgain">Andere Exercises.json auswählen</button>
           </div>
         </details>
-        <button type="button" class="btn btn--primary" id="export-btn">Export changes</button>
+        <button type="button" class="btn btn--primary" id="export-btn" data-i18n="header.export">Änderungen exportieren</button>
+        <div id="lang-slot"></div>
       </div>
     </div>
-    <nav class="app-header__tabs" aria-label="Screens">
+    <nav class="app-header__tabs" aria-label="Ansichten" data-i18n-label="header.screens">
       <ul class="tabs" id="tabs"></ul>
     </nav>
   </header>
 
   <main id="main" class="app-main" tabindex="-1">
     <div id="view-root">
-      <noscript><p>The coach data reviewer needs JavaScript. Please turn it on and reload the page.</p></noscript>
-      <p>If this text stays, open the app through the web address the developer gave you. Opening index.html from the disk does not work.</p>
+      <noscript><p>Die Übungskatalog-Prüfung braucht JavaScript. Schalten Sie JavaScript ein und laden Sie die Seite neu.</p></noscript>
+      <p>Bleibt dieser Text stehen, öffnen Sie die App über die Webadresse, die Sie vom Entwickler bekommen haben. Eine index.html direkt von der Festplatte funktioniert nicht.</p>
     </div>
   </main>
 
   <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
 
-  <input type="file" id="folder-input" webkitdirectory multiple hidden>
+  <input type="file" id="exercises-input" accept=".json,application/json" hidden>
   <input type="file" id="work-input" accept=".json,application/json" hidden>
 </body>
 </html>

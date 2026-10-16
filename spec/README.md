@@ -1,6 +1,6 @@
 # Specs
 
-Run all specs with Node's built-in test runner. The app has no dependencies, so nothing needs installing.
+`npm test` needs no `npm install`.
 
 ```bash
 npm test
@@ -15,7 +15,7 @@ npm test
 - `skillTrees/SKKG.json`: ends without a newline
 - `skillTrees/SUPPORT.json`: the empty `"{\n\n}"` file
 
-The sample also holds records with planted problems, for example exercise 14 with a broken `isJump` flag that `schema.spec.js` finds. The unit specs run against the sample.
+Exercise 14 carries one planted violation, a non-boolean `isJump`, which `schema.spec.js` finds. The unit specs run against the sample. `exercises-only.spec.js` loads the sample `Exercises.json` without the skill trees, as the app does.
 
 ## Real data
 
@@ -25,7 +25,7 @@ The real-data specs read the folder from the environment variable `CDR_DATA_DIR`
 
 To run them, either:
 
-1. copy the data folder `generator` (with `Exercises.json` and `skillTrees/`) into `spec/fixtures/real/`, then run `npm run test:real`, or
-2. point the variable at the folder: `CDR_DATA_DIR=/path/to/generator npm run test:real`.
+1. copy the data folder `generator` (with `Exercises.json` and `skillTrees/`) into `spec/fixtures/real/`, then run `npm test`, or
+2. point the variable at the folder: `CDR_DATA_DIR=/path/to/generator npm test`.
 
 The real-data spec in `changelog.spec.js` also checks that the pinned counts in `js/core/config.js` still match the data.

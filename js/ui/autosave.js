@@ -1,7 +1,9 @@
 // Keeps a copy of the current work file in localStorage, one entry per data fingerprint.
+// Each backup belongs to one Exercises.json: the app offers only the entry of the loaded file.
 import * as workfile from '../core/workfile.js';
 
-const PREFIX = 'cdr.work.';
+/** The localStorage key of a backup is this prefix plus the data fingerprint. */
+export const PREFIX = 'cdr.work.';
 
 /**
  * @typedef {{ unsaved: boolean, text: string }} Backup  text is the work file, unsaved tells whether
@@ -17,10 +19,11 @@ export class AutoSave {
   /** @type {ReturnType<typeof setTimeout> | null} */
   #timer = null;
   #failed = false;
+  #written = false;
 
   /**
    * @param {string} fingerprint data fingerprint the backup belongs to
-   * @param {() => Backup | null} build returns the backup to write, or null when there is nothing to keep
+   * @param {() => Backup | null} build returns the backup to write, or null when the session has no commands
    * @param {{ delay?: number, onFail?: () => void }} [opts] onFail runs once when the browser refuses to store
    */
   constructor(fingerprint, build, { delay = 400, onFail = () => {} } = {}) {
@@ -36,13 +39,21 @@ export class AutoSave {
     this.#timer = setTimeout(() => this.flush(), this.#delay);
   }
 
-  /** Writes the backup now. */
+  /**
+   * Writes the backup now. Until this AutoSave has written a backup, a session without commands
+   * keeps the stored one: it belongs to an earlier session, and the trainer decides on it.
+   * After the first write, a session without commands removes it.
+   */
   flush() {
     this.cancel();
     try {
       const backup = this.#build();
-      if (backup) localStorage.setItem(this.#key, JSON.stringify(backup));
-      else localStorage.removeItem(this.#key);
+      if (backup) {
+        localStorage.setItem(this.#key, JSON.stringify(backup));
+        this.#written = true;
+      } else if (this.#written) {
+        localStorage.removeItem(this.#key);
+      }
     } catch {
       if (this.#failed) return;
       this.#failed = true;
@@ -56,11 +67,11 @@ export class AutoSave {
     this.#timer = null;
   }
 
-  /** @returns {SavedWork | null} */
+  /** Returns the backup of this fingerprint, or null. @returns {SavedWork | null} */
   read() {
     try {
       const entry = JSON.parse(localStorage.getItem(this.#key) ?? 'null');
-      if (typeof entry?.text !== 'string') return null;
+      if (typeof entry?.text !== 'string' || entry.text.length > workfile.MAX_FILE_BYTES) return null;
       const parsed = workfile.parse(entry.text);
       return parsed.ok ? { work: parsed.value, unsaved: entry.unsaved !== false } : null;
     } catch {
@@ -68,6 +79,7 @@ export class AutoSave {
     }
   }
 
+  /** Removes the backup of this fingerprint and drops a pending write. */
   forget() {
     this.cancel();
     try {

@@ -1,12 +1,13 @@
-# Work files and review progress the app downloads
+# Work files the app downloads
 coach-review-work*.json
-review-status*.json
 
 # Real data files: the trainer uploads them in the app, the repo never holds them
 spec/fixtures/real/
 Exercises.json
 skillTrees/
 changelog.md
+
+.omc
 
 # The synthetic sample fixtures stay tracked
 !spec/fixtures/sample/Exercises.json

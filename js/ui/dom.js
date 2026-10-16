@@ -1,4 +1,7 @@
 // DOM helpers shared by all screens. Strings always become text nodes, so data never reaches innerHTML.
+import { fmt, t } from './i18n.js';
+
+export { fmt };
 
 const BOOLEAN_ATTRS = new Set(['disabled', 'checked', 'hidden', 'readonly', 'required', 'selected', 'multiple', 'open', 'autofocus']);
 
@@ -49,19 +52,8 @@ export function h(tag, attrs, ...children) {
   return el;
 }
 
-const numberFormat = new Intl.NumberFormat('en-US');
-
-/** @param {number} n @returns {string} */
-export const fmt = (n) => numberFormat.format(n);
-
-/** @param {number} n @param {string} one @param {string} [many] @returns {string} */
-export const plural = (n, one, many = `${one}s`) => `${fmt(n)} ${n === 1 ? one : many}`;
-
 /** A unique DOM id. @param {string} [prefix] @returns {string} */
 export const uid = (prefix = 'cdr') => `${prefix}-${crypto.randomUUID()}`;
-
-/** English domain term with the German glossary term as a grey hint. @param {string} en @param {string | null} [de] */
-export const term = (en, de) => h('span', { class: 'term' }, en, de ? h('span', { class: 'term__de', lang: 'de' }, de) : null);
 
 const NON_TEXT_INPUTS = ['checkbox', 'radio', 'button', 'submit', 'reset', 'range', 'color', 'file'];
 
@@ -72,36 +64,6 @@ export function isTyping(el) {
   if (tagName === 'TEXTAREA' || tagName === 'SELECT') return true;
   if (tagName === 'INPUT') return !NON_TEXT_INPUTS.includes((el.type || 'text').toLowerCase());
   return el.isContentEditable === true;
-}
-
-/** Progress bar with a label and a "done of total" count. */
-export class ProgressBar {
-  #fill = h('div', { class: 'progress__fill' });
-  #track;
-  #count = h('span', { class: 'num' });
-  #unit;
-
-  /** @param {{ label?: string, unit?: string, small?: boolean, done?: number, total?: number }} [opts] */
-  constructor({ label = '', unit = '', small = false, done = 0, total = 0 } = {}) {
-    this.#unit = unit;
-    this.#track = h('div', { class: 'progress__track', role: 'progressbar', 'aria-valuemin': '0', 'aria-label': label || null }, this.#fill);
-    this.el = h('div', { class: ['progress', small ? 'progress--small' : ''] },
-      h('div', { class: 'progress__label' }, h('strong', null, label), this.#count),
-      this.#track);
-    this.update({ done, total });
-  }
-
-  /** @param {{ done?: number, total?: number }} value */
-  update({ done = 0, total = 0 }) {
-    const share = total > 0 ? done / total : 0;
-    this.#fill.style.width = `${share * 100}%`;
-    this.#track.setAttribute('aria-valuemax', String(total));
-    this.#track.setAttribute('aria-valuenow', String(done));
-    const text = `${fmt(done)} of ${fmt(total)}${this.#unit ? ` ${this.#unit}` : ''} · ${Math.round(share * 100)}%`;
-    this.#track.setAttribute('aria-valuetext', text);
-    this.#count.textContent = text;
-    this.el.classList.toggle('is-complete', total > 0 && done >= total);
-  }
 }
 
 /** @param {{ title: string, body?: string, action?: Node | null }} opts */
@@ -121,7 +83,8 @@ export const notice = (tone, title, body) =>
  * @typedef {{ label?: string, value?: unknown, primary?: boolean, danger?: boolean, ghost?: boolean,
  *   autofocus?: boolean, spacer?: boolean, onClick?: (close: (value?: unknown) => void) => void }} DialogAction
  * @typedef {{ title: string, body?: Child, actions?: DialogAction[], wide?: boolean, closeOnBackdrop?: boolean,
- *   onOpen?: (dialog: HTMLDialogElement, close: (value?: unknown) => void) => void }} DialogOptions
+ *   cancelable?: boolean, onOpen?: (dialog: HTMLDialogElement, close: (value?: unknown) => void) => void }} DialogOptions
+ *   With cancelable false, Esc does nothing and only an action closes the dialog.
  */
 
 /** Modal on a native dialog. Esc cancels, focus returns to the opener, result resolves with the action value. */
@@ -131,7 +94,7 @@ export class Dialog {
   #resolve = () => {};
 
   /** @param {DialogOptions} opts */
-  constructor({ title, body, actions = [], wide = false, closeOnBackdrop = true, onOpen }) {
+  constructor({ title, body, actions = [], wide = false, closeOnBackdrop = true, cancelable = true, onOpen }) {
     const titleId = uid('dlg-title');
     this.body = h('div', { class: 'dialog__body' }, body);
     const foot = h('div', { class: 'dialog__foot' });
@@ -159,7 +122,7 @@ export class Dialog {
     const { dialog } = this;
     dialog.addEventListener('cancel', (e) => {
       e.preventDefault();
-      this.close(undefined);
+      if (cancelable) this.close(undefined);
     });
     // Chrome may close a dialog without a cancellable event (repeated Esc).
     dialog.addEventListener('close', () => this.close(undefined));
@@ -188,17 +151,14 @@ export class Dialog {
   }
 }
 
-/** @param {DialogOptions} opts @returns {Dialog} */
-export const openDialog = (opts) => new Dialog(opts);
-
 const asBody = (body) => (typeof body === 'string' ? h('p', null, body) : body);
 
 /**
  * @param {{ title: string, body: Child, confirmLabel?: string, cancelLabel?: string, danger?: boolean }} opts
  * @returns {Promise<boolean>}
  */
-export async function confirmDialog({ title, body, confirmLabel = 'OK', cancelLabel = 'Cancel', danger = false }) {
-  const value = await openDialog({
+export async function confirmDialog({ title, body, confirmLabel = t('common.ok'), cancelLabel = t('common.cancel'), danger = false }) {
+  const value = await new Dialog({
     title,
     body: asBody(body),
     actions: [
@@ -210,8 +170,8 @@ export async function confirmDialog({ title, body, confirmLabel = 'OK', cancelLa
 }
 
 /** @param {{ title: string, body: Child, wide?: boolean, okLabel?: string }} opts @returns {Promise<unknown>} */
-export const messageDialog = ({ title, body, wide = false, okLabel = 'OK' }) =>
-  openDialog({ title, body: asBody(body), wide, actions: [{ label: okLabel, value: true, primary: true, autofocus: true }] }).result;
+export const messageDialog = ({ title, body, wide = false, okLabel = t('common.ok') }) =>
+  new Dialog({ title, body: asBody(body), wide, actions: [{ label: okLabel, value: true, primary: true, autofocus: true }] }).result;
 
 /** @param {number} ms @returns {Promise<void>} */
 export const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -263,7 +223,7 @@ export class Pager {
    * @param {HTMLElement} container @param {unknown[]} items @param {(item: unknown, index: number) => Node | null} renderItem
    * @param {{ pageSize?: number, label?: string }} [opts]
    */
-  constructor(container, items, renderItem, { pageSize = 50, label = 'Pages' } = {}) {
+  constructor(container, items, renderItem, { pageSize = 50, label = t('pager.label') } = {}) {
     this.#container = container;
     this.#renderItem = renderItem;
     this.#pageSize = pageSize;
@@ -313,11 +273,11 @@ export class Pager {
     if (!this.nav.hidden) {
       const page = this.#page;
       this.nav.append(
-        h('span', { class: 'num' }, `Showing ${fmt(start + 1)} to ${fmt(end)} of ${fmt(items.length)}`),
+        h('span', { class: 'num' }, t('pager.showing', { start: start + 1, end, total: items.length })),
         h('div', { class: 'pager__buttons' },
-          h('button', { type: 'button', class: 'btn btn--small', disabled: page === 0, onclick: () => this.goTo(page - 1, true) }, 'Previous'),
-          h('span', { class: 'num' }, `Page ${page + 1} of ${this.#pages}`),
-          h('button', { type: 'button', class: 'btn btn--small', disabled: page >= this.#pages - 1, onclick: () => this.goTo(page + 1, true) }, 'Next')));
+          h('button', { type: 'button', class: 'btn btn--small', disabled: page === 0, onclick: () => this.goTo(page - 1, true) }, t('pager.previous')),
+          h('span', { class: 'num' }, t('pager.page', { page: page + 1, pages: this.#pages })),
+          h('button', { type: 'button', class: 'btn btn--small', disabled: page >= this.#pages - 1, onclick: () => this.goTo(page + 1, true) }, t('pager.next'))));
     }
     if (scroll) {
       const host = pagerHost(this.#container);
@@ -356,7 +316,3 @@ export function highlight(el) {
   el.classList.add('is-highlight');
   el.scrollIntoView({ block: 'center', behavior: 'smooth' });
 }
-
-/** Local date as YYYY-MM-DD. @param {Date} [d] @returns {string} */
-export const isoDate = (d = new Date()) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;

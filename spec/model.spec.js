@@ -67,6 +67,52 @@ test('model: path helpers work in place and keep key order', () => {
   assert.equal(model.hasAt(obj, ['b', 'c']), false);
 });
 
+test('model: setAt, getAt and deleteAt refuse prototype keys', () => {
+  const obj = {};
+  assert.throws(() => model.setAt(obj, ['__proto__', 'x'], 1), /not allowed/);
+  assert.throws(() => model.setAt(obj, ['a', 'constructor'], 1), /not allowed/);
+  assert.throws(() => model.deleteAt(obj, ['prototype']), /not allowed/);
+  assert.equal(model.getAt(obj, ['__proto__']), undefined);
+  assert.equal(model.hasAt(obj, ['constructor']), false);
+  assert.equal(({}).x, undefined);
+});
+
+test('model: originalExercise returns the loaded record and ignores later edits', () => {
+  const ds = loadSample();
+  const loaded = model.originalExercise(ds, '1');
+  assert.equal(loaded.id, '1');
+  assert.notEqual(loaded, ds.index.exerciseById.get('1'));
+  const name = loaded.name;
+  ds.index.exerciseById.get('1').name = 'Changed';
+  assert.equal(model.originalExercise(ds, 1).name, name);
+  assert.equal(model.originalExercise(ds, '1'), loaded);
+  assert.equal(model.originalExercise(ds, '424242'), undefined);
+});
+
+test('model: isChanged compares a field with the loaded file', () => {
+  const ds = loadSample();
+  const rec = ds.index.exerciseById.get('1');
+  assert.equal(model.isChanged(ds, rec, ['name']), false);
+  rec.name = 'Changed';
+  assert.equal(model.isChanged(ds, rec, ['name']), true);
+  assert.equal(model.isChanged(ds, rec, ['level']), false);
+  rec.extra = 1;
+  assert.equal(model.isChanged(ds, rec, ['extra']), true);
+  assert.equal(model.isChanged(ds, { id: '424242', name: 'New' }, ['name']), false);
+});
+
+test('model: localDate formats the local calendar date', () => {
+  assert.equal(model.localDate(new Date(2026, 0, 5, 23, 59)), '2026-01-05');
+  assert.equal(model.localDate(new Date(2026, 11, 31, 0, 0)), '2026-12-31');
+  assert.match(model.localDate(), /^\d{4}-\d{2}-\d{2}$/);
+});
+
+test('model: TAG_GROUPS lists every prefix tagPrefix knows once', () => {
+  const prefixes = model.TAG_GROUPS.map((g) => g.prefix);
+  assert.equal(new Set(prefixes).size, prefixes.length);
+  for (const p of prefixes) assert.equal(model.tagPrefix(`${p}X`), p);
+});
+
 test('model: deepEqual and clone', () => {
   assert.equal(model.deepEqual({ a: [1, { b: 2 }] }, { a: [1, { b: 2 }] }), true);
   assert.equal(model.deepEqual({ a: 1 }, { a: 1, b: undefined }), false);

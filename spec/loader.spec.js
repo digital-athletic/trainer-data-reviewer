@@ -48,7 +48,8 @@ test('loader: accepts athlete-mobile/assets/data/generator paths', () => {
 test('loader: refuses the whole project folder', () => {
   const root = pick(entries(['app/athlete-mobile/assets/data/generator/Exercises.json', 'app/README.md']));
   assert.equal(root.error, loader.PROJECT_ERROR);
-  assert.match(root.error, /You picked the whole project folder/);
+  assert.equal(root.error.code, 'projectFolder');
+  assert.match(root.error.message, /You picked the whole project folder/);
   const mobile = pick(entries(['athlete-mobile/node_modules/x/index.js', 'athlete-mobile/assets/data/generator/Exercises.json']));
   assert.equal(mobile.error, loader.PROJECT_ERROR);
 });
@@ -56,7 +57,30 @@ test('loader: refuses the whole project folder', () => {
 test('loader: reports a folder without Exercises.json', () => {
   const r = pick(entries(['x/skillTrees/SK.json']));
   assert.equal(r.exercises, null);
-  assert.match(r.error, /Exercises\.json was not found/);
+  assert.equal(r.error, loader.MISSING_ERROR);
+});
+
+test('loader: accepts a single picked Exercises.json and finds no skill trees', () => {
+  const r = pick(entries(['Exercises.json']));
+  assert.equal(r.error, undefined);
+  assert.equal(r.exercises, 'Exercises.json');
+  assert.deepEqual(r.trees, []);
+  assert.equal(r.ignored, 0);
+});
+
+test('loader: refuses a single file with another name', () => {
+  const r = pick(entries(['Exercises (1).json']));
+  assert.equal(r.exercises, null);
+  assert.equal(r.error, loader.MISSING_ERROR);
+  assert.match(r.error.message, /Exercises\.json/);
+});
+
+test('loader: readFileList reads a single picked Exercises.json', async () => {
+  const raw = readRaw(SAMPLE_DIR);
+  const r = await loader.readFileList([{ name: 'Exercises.json', webkitRelativePath: '', text: async () => raw['Exercises.json'] }]);
+  assert.deepEqual(r.errors, []);
+  assert.equal(r.ignored, 0);
+  assert.deepEqual(r.raw, { 'Exercises.json': raw['Exercises.json'] });
 });
 
 test('loader: readFileList reads a picked folder into the raw file map', async () => {
@@ -72,10 +96,26 @@ test('loader: readFileList reports unreadable files and picker errors', async ()
     throw new Error('locked');
   };
   const r = await loader.readFileList(files);
-  assert.deepEqual(r.errors, [`The browser could not read ${files[1].webkitRelativePath}.`]);
+  assert.deepEqual(r.errors.map((e) => e.message), [`The browser could not read ${files[1].webkitRelativePath}.`]);
   assert.equal(Object.hasOwn(r.raw, 'Exercises.json'), true);
   const empty = await loader.readFileList([]);
-  assert.match(empty.errors[0], /Exercises\.json was not found/);
+  assert.equal(empty.errors[0], loader.MISSING_ERROR);
+});
+
+test('loader: readFileList refuses a file above 50 MB without reading it', async () => {
+  let read = false;
+  const big = {
+    name: 'Exercises.json', webkitRelativePath: '', size: loader.MAX_DATA_FILE_BYTES + 1,
+    text: async () => {
+      read = true;
+      return '[]';
+    }
+  };
+  const r = await loader.readFileList([big]);
+  assert.equal(read, false);
+  assert.deepEqual(r.raw, {});
+  assert.deepEqual(r.errors.map((e) => e.message), ['Exercises.json is larger than 50 MB. The app does not read it. Pick the Exercises.json of the project.']);
+  assert.deepEqual(r.errors[0].params, { path: 'Exercises.json', mb: 50 });
 });
 
 test('loader (real data): readFileList reads the real folder', REAL, async () => {

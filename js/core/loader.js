@@ -1,20 +1,25 @@
 import { DATA_TARGET_PATH } from './config.js';
+import { msg } from './messages.js';
 
 /**
  * @typedef {import('./model.js').RawFiles} RawFiles
+ * @typedef {import('./messages.js').Message} Message
  * @typedef {{ relativePath: string }} PathEntry
- * @typedef {{ exercises: string | null, trees: string[], ignored: number, error?: string }} PickResult
- * @typedef {{ raw: RawFiles, ignored: number, errors: string[] }} ReadResult
+ * @typedef {{ exercises: string | null, trees: string[], ignored: number, error?: Message }} PickResult
+ * @typedef {{ raw: RawFiles, ignored: number, errors: Message[] }} ReadResult
  */
 
-export const PROJECT_ERROR = `You picked the whole project folder. Please pick ${DATA_TARGET_PATH} instead.`;
-const MISSING_ERROR = `Exercises.json was not found in the chosen folder. Please pick ${DATA_TARGET_PATH}.`;
+export const PROJECT_ERROR = Object.freeze(msg('projectFolder', { path: `${DATA_TARGET_PATH}/Exercises.json` }));
+export const MISSING_ERROR = Object.freeze(msg('onlyExercises', { path: `${DATA_TARGET_PATH}/Exercises.json` }));
+/** The app refuses a picked data file above this size in bytes. */
+export const MAX_DATA_FILE_BYTES = 50 * 1024 * 1024;
 const [PROJECT_FOLDER] = DATA_TARGET_PATH.split('/');
 
 const segments = (entry) => String(entry.relativePath ?? '').replace(/\\/g, '/').split('/').filter(Boolean);
 
 /**
- * Finds Exercises.json and its sibling skillTrees/*.json, whatever the picked folder is called.
+ * Finds Exercises.json in the picked files. A single picked file has no folder, so trees stays empty.
+ * A folder pick also yields the sibling skillTrees/*.json files, whatever the folder is called.
  * @param {PathEntry[]} entries @returns {PickResult}
  */
 export function pickDataFiles(entries) {
@@ -41,7 +46,7 @@ export function pickDataFiles(entries) {
 
 /**
  * Browser only: reads the picked FileList into a RawFiles map.
- * @param {ArrayLike<{ name: string, webkitRelativePath?: string, text(): Promise<string> }>} fileList
+ * @param {ArrayLike<{ name: string, size: number, webkitRelativePath?: string, text(): Promise<string> }>} fileList
  * @returns {Promise<ReadResult>}
  */
 export async function readFileList(fileList) {
@@ -54,10 +59,14 @@ export async function readFileList(fileList) {
     ...picked.trees.map((path) => ({ key: `skillTrees/${path.split('/').at(-1)}`, path }))
   ];
   const texts = await Promise.all(jobs.map(async ({ path }) => {
+    const file = byPath.get(path);
+    if (file.size > MAX_DATA_FILE_BYTES) {
+      return { error: msg('tooLarge', { path, mb: MAX_DATA_FILE_BYTES / (1024 * 1024) }) };
+    }
     try {
-      return { text: await byPath.get(path).text() };
+      return { text: await file.text() };
     } catch {
-      return { error: `The browser could not read ${path}.` };
+      return { error: msg('unreadable', { path }) };
     }
   }));
   /** @type {RawFiles} */

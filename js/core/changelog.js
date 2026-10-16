@@ -1,5 +1,5 @@
 import { ATHLETE_DATA_TABLE, PINNED_TESTS } from './config.js';
-import { EXERCISES, PAUSE_TAG, changedFiles, originalData, parseRecordKey } from './model.js';
+import { PAUSE_TAG, changedFiles, localDate, originalExercise, parseRecordKey } from './model.js';
 
 /**
  * @typedef {import('./model.js').Dataset} Dataset
@@ -11,11 +11,13 @@ const { exerciseRegistry: EX_TEST, skillTreeRegistry: TREE_TEST } = PINNED_TESTS
 const RECORD_FIELDS = ['(new record)', '(deleted)'];
 
 const json = (value) => (value === undefined ? '(none)' : JSON.stringify(value));
-// Escapes the characters that start Markdown or HTML syntax inside a table cell.
-const esc = (s) => String(s).replace(/[\\`|<>[\]]/g, '\\$&').replace(/\r?\n/g, ' ');
+// CRLF, CR, LF, and U+2028 (Zl) and U+2029 (Zp), the Unicode line and paragraph separators.
+const LINE_BREAK = /\r\n|[\r\n\p{Zl}\p{Zp}]/gu;
+// Escapes the characters that start Markdown or HTML syntax inside a table cell, on one line.
+const esc = (s) => String(s).replace(/[\\`|<>[\]&*_~!]/g, '\\$&').replace(LINE_BREAK, ' ');
 // A code span whose fence is longer than any backtick run in the text, on one line.
 function code(s) {
-  const text = String(s).replace(/\r?\n/g, ' ');
+  const text = String(s).replace(LINE_BREAK, ' ');
   const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
   const fence = '`'.repeat(longest + 1);
   const pad = text.startsWith('`') || text.endsWith('`') ? ' ' : '';
@@ -23,15 +25,14 @@ function code(s) {
 }
 const hasTag = (record, tag) => Array.isArray(record?.tags) && record.tags.includes(tag);
 
-const originalExercise = (ds, id) => originalData(ds, EXERCISES).find((x) => x.id === id);
-
 /**
  * Notes for the developer when the edits change a value that a test of the target
  * repository pins, plus a reserved-id note for every deleted record.
- * @param {Editor} editor @param {Dataset} ds @returns {string[]}
+ * @param {Editor} editor @param {Dataset} ds
+ * @param {Change[]} [changes] the current editor.netChanges(), to skip computing them again
+ * @returns {string[]}
  */
-export function pinnedTestNotes(editor, ds) {
-  const changes = editor.netChanges();
+export function pinnedTestNotes(editor, ds, changes = editor.netChanges()) {
   const quadTag = EX_TEST.quadricepsTag;
   const notes = [];
   let exAddDel = false;
@@ -79,7 +80,7 @@ export function pinnedTestNotes(editor, ds) {
   }
   for (const k of deleted) {
     const isExercise = k.kind === 'exercise';
-    const id = isExercise ? k.id : k.branchId;
+    const id = code(isExercise ? k.id : k.branchId);
     const table = `${ATHLETE_DATA_TABLE} (${isExercise ? 'exercise_id' : 'branch_id'})`;
     notes.push(`Deleted ${isExercise ? 'exercise' : 'branch'} ${id}: athlete data in ${table} may reference id ${id}. The id stays reserved.`);
   }
@@ -93,11 +94,15 @@ export function newTags(editor, ds) {
   return [...tags].sort();
 }
 
-/** @param {Editor} editor @param {Dataset} ds @param {{ date?: string }} [opts] @returns {string} markdown */
+/**
+ * @param {Editor} editor @param {Dataset} ds
+ * @param {{ date?: string, changes?: Change[] }} [opts] changes: the current editor.netChanges()
+ * @returns {string} markdown
+ */
 export function build(editor, ds, opts) {
-  const date = opts?.date || new Date().toISOString().slice(0, 10);
+  const date = opts?.date || localDate();
   const files = changedFiles(ds);
-  const changes = editor.netChanges();
+  const changes = opts?.changes ?? editor.netChanges();
   const lines = [`# Data changes ${date}`, '', '## Files', ''];
   if (!files.length) lines.push('No changed files.');
   for (const f of files) lines.push(`- ${code(f.repoPath)}`);
@@ -114,7 +119,7 @@ export function build(editor, ds, opts) {
   const tags = newTags(editor, ds);
   lines.push('', '## New tags', '');
   lines.push(...(tags.length ? tags.map((t) => `- ${code(t)} (confirmed as a new tag)`) : ['None.']));
-  const notes = pinnedTestNotes(editor, ds);
+  const notes = pinnedTestNotes(editor, ds, changes);
   lines.push('', '## Notes for the developer', '');
   lines.push(...(notes.length ? notes.map((n) => `- ${n}`) : ['None.']), '');
   return lines.join('\n');

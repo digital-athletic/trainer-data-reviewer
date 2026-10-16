@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import * as model from '../js/core/model.js';
 import * as query from '../js/core/query.js';
 import { REAL, loadSample, loadReal } from './helpers.js';
 
@@ -35,6 +36,12 @@ test('query: facets list prefixed tags and the trees', () => {
   assert.deepEqual(facets.region, ['REGION_CORE', 'REGION_LOWER_BODY', 'REGION_UPPER_BODY']);
   assert.deepEqual(facets.eq, ['EQ_BARBELL', 'EQ_DUMBBELL']);
   assert.deepEqual(facets.place, ['PLACE_HOME', 'PLACE_STUDIO']);
+});
+
+test('query: FACET_PREFIX takes its prefixes from TAG_GROUPS', () => {
+  assert.deepEqual(query.FACET_PREFIX, { skill: 'SKILL_', region: 'REGION_', eq: 'EQ_', place: 'PLACE_' });
+  const prefixes = model.TAG_GROUPS.map((g) => g.prefix);
+  for (const p of Object.values(query.FACET_PREFIX)) assert.ok(prefixes.includes(p), p);
 });
 
 test('query: filters combine as AND', () => {

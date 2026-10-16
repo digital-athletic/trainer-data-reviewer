@@ -1,4 +1,5 @@
 import { DATA_TARGET_PATH } from './config.js';
+import { messageError } from './messages.js';
 
 /**
  * @typedef {Record<string, string>} RawFiles  path ("Exercises.json" or "skillTrees/SK.json") to raw text
@@ -14,7 +15,7 @@ import { DATA_TARGET_PATH } from './config.js';
  *   trees: Record<string, Record<string, Branch>>, treeNames: string[], index: Index,
  *   loadMax: { exerciseId: number, branchId: number } }} Dataset
  * @typedef {{ kind: 'exercise', id: string } | { kind: 'branch', tree: string, branchId: string }} Target
- * @typedef {{ path: string[], message: string }} Violation
+ * @typedef {{ path: string[] } & import('./messages.js').Message} Violation
  * @typedef {{ ok: true } | { ok: false, errors: Violation[] }} Result
  * @typedef {{ path: string, repoPath: string, fileName: string, text: string }} ChangedFile
  */
@@ -23,10 +24,27 @@ export const REPO_BASE = `${DATA_TARGET_PATH}/`;
 export const EXERCISES = 'Exercises.json';
 export const PAUSE_ID = '999999';
 export const PAUSE_TAG = 'PAUSE';
-export const TAG_PREFIXES = Object.freeze([
-  'EQ_TYPE_', 'EXERCISE_DIRECTION_', 'MUSCLE_SECONDARY_', 'MUSCLE_INVOLVEMENT_', 'MUSCLE_',
-  'SEASON_PHASE_', 'REGION_', 'SKILL_', 'PLACE_', 'SIDE_', 'AGE_', 'PAIN_', 'EQ_'
-].sort((a, b) => b.length - a.length));
+/**
+ * Tag groups in display order. key names the label of the group in the UI dictionaries.
+ * @type {readonly { readonly prefix: string, readonly key: string }[]}
+ */
+export const TAG_GROUPS = Object.freeze([
+  ['SKILL_', 'skill'],
+  ['REGION_', 'region'],
+  ['EXERCISE_DIRECTION_', 'direction'],
+  ['EQ_TYPE_', 'weightType'],
+  ['EQ_', 'equipment'],
+  ['PLACE_', 'place'],
+  ['SIDE_', 'side'],
+  ['AGE_', 'age'],
+  ['PAIN_', 'pain'],
+  ['SEASON_PHASE_', 'seasonPhase'],
+  ['MUSCLE_', 'muscle'],
+  ['MUSCLE_SECONDARY_', 'secondaryMuscle'],
+  ['MUSCLE_INVOLVEMENT_', 'muscleInvolvement']
+].map(([prefix, key]) => Object.freeze({ prefix, key })));
+/** The TAG_GROUPS prefixes, longest first, so the first match is the longest. */
+const TAG_PREFIXES = Object.freeze(TAG_GROUPS.map((g) => g.prefix).sort((a, b) => b.length - a.length));
 
 const DIGITS = /^\d+$/;
 const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
@@ -36,7 +54,7 @@ export const isUnsafeKey = (key) => UNSAFE_KEYS.has(String(key));
 
 function assertSafePath(path) {
   const bad = path.find(isUnsafeKey);
-  if (bad !== undefined) throw new Error(`The field name "${bad}" is not allowed.`);
+  if (bad !== undefined) throw messageError('unsafeField', { name: bad });
 }
 
 /**
@@ -60,6 +78,8 @@ export function parseRecordKey(key) {
 
 // Parsed copies of the loaded raw texts, keyed by FileEntry. Never mutated.
 const originals = new WeakMap();
+// The loaded exercises by id, keyed by the Exercises.json FileEntry.
+const originalById = new WeakMap();
 
 /** @param {unknown} v @returns {v is Record<string, unknown>} */
 export const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -81,14 +101,18 @@ function parseFile(path, text) {
   try {
     return JSON.parse(text);
   } catch (e) {
-    throw new Error(`${path} is not valid JSON (${e.message}). Please pick an unchanged data folder.`);
+    throw messageError('notJson', { path, detail: e.message });
   }
 }
 
-/** @param {RawFiles} raw @returns {Dataset} Throws an Error with a plain message. */
+/**
+ * Builds a dataset from Exercises.json and any skillTrees/*.json files. Skill trees are optional:
+ * a raw map with Exercises.json alone gives a dataset with zero skill trees.
+ * @param {RawFiles} raw @returns {Dataset} Throws an Error with a plain message.
+ */
 export function load(raw) {
   if (typeof raw?.[EXERCISES] !== 'string') {
-    throw new Error(`Exercises.json is missing. Please pick ${DATA_TARGET_PATH}.`);
+    throw messageError('exercisesMissing', { path: `${DATA_TARGET_PATH}/${EXERCISES}` });
   }
   /** @type {Record<string, FileEntry>} */
   const files = {};
@@ -105,11 +129,11 @@ export function load(raw) {
       trailingNewline: text.endsWith('\n')
     };
     if (entry.kind === 'exercises') {
-      if (!Array.isArray(data)) throw new Error('Exercises.json must hold a list of exercises.');
+      if (!Array.isArray(data)) throw messageError('exercisesNotList');
     } else {
       const match = /^skillTrees\/([^/]+)\.json$/.exec(path);
-      if (!match || isUnsafeKey(match[1])) throw new Error(`Unexpected file ${path}.`);
-      if (!isObject(data)) throw new Error(`${path} must hold an object of branches.`);
+      if (!match || isUnsafeKey(match[1])) throw messageError('unexpectedFile', { path });
+      if (!isObject(data)) throw messageError('treeNotObject', { path });
       const [, treeName] = match;
       entry.treeName = treeName;
       trees[treeName] = data;
@@ -162,8 +186,6 @@ export function buildIndex(ds) {
   for (const ex of ds.exercises) {
     index.exerciseById.set(ex.id, ex);
     count(index.tagCounts.exercise, ex.tags);
-  }
-  for (const ex of ds.exercises) {
     if (ex.otherSideExerciseId != null) pushTo(index.otherSideRefsByExerciseId, String(ex.otherSideExerciseId), ex.id);
   }
   for (const tree of ds.treeNames) {
@@ -251,6 +273,38 @@ export function originalData(ds, path) {
   if (!entry) return undefined;
   if (!originals.has(entry)) originals.set(entry, JSON.parse(entry.raw));
   return originals.get(entry);
+}
+
+/**
+ * The loaded version of an exercise, or undefined for a new one. Never mutated.
+ * @param {Dataset} ds @param {string | number} id @returns {Exercise | undefined}
+ */
+export function originalExercise(ds, id) {
+  const entry = ds.files[EXERCISES];
+  if (!entry) return undefined;
+  if (!originalById.has(entry)) {
+    const list = originalData(ds, EXERCISES).filter(Boolean);
+    originalById.set(entry, new Map(list.map((ex) => [String(ex.id), ex])));
+  }
+  return originalById.get(entry).get(String(id));
+}
+
+/**
+ * True when the field at path differs from the loaded file. New exercises never count as changed.
+ * @param {Dataset} ds @param {Exercise} rec @param {string[]} path @returns {boolean}
+ */
+export function isChanged(ds, rec, path) {
+  const orig = originalExercise(ds, rec.id);
+  if (!orig) return false;
+  const had = hasAt(orig, path);
+  if (had !== hasAt(rec, path)) return true;
+  return had && !deepEqual(getAt(orig, path), getAt(rec, path));
+}
+
+/** The calendar date in the local time zone as YYYY-MM-DD. @param {Date} [date] @returns {string} */
+export function localDate(date = new Date()) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
 /** @param {Dataset} ds @param {string} path @returns {string} */

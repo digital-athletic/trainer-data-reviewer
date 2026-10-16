@@ -22,7 +22,7 @@ test('schema: picklists mirror the athlete app schemas', () => {
 
 test('schema: the sample dataset has exactly its one planted violation', () => {
   const found = schema.validateDataset(loadSample());
-  assert.deepEqual(found, [{ recordKey: 'exercise:14', violations: [{ path: ['isJump'], message: 'Must be ticked or unticked (true or false).' }] }]);
+  assert.deepEqual(found, [{ recordKey: 'exercise:14', violations: [{ path: ['isJump'], code: 'flagBoolean', params: {}, message: 'Must be ticked or unticked (true or false).' }] }]);
 });
 
 test('schema (real data): the real dataset has no violations', REAL, () => {
@@ -40,14 +40,10 @@ test('schema: branch level keys must be 1 to 6', () => {
   assert.deepEqual(schema.validateBranch(null)[0].path, []);
 });
 
-test('schema: tags must be a list, and setTags refuses PAUSE', () => {
+test('schema: tags must be a list of text', () => {
   assert.equal(schema.validateExercise(exercise({ tags: 'REGION_CORE' }))[0].path[0], 'tags');
   assert.equal(schema.validateExercise(exercise({ tags: [1] }))[0].message, 'Every tag must be text.');
   assert.equal(schema.validateBranch({ tags: 'x', levels: {} })[0].path[0], 'tags');
-  const editor = edits.create(loadSample());
-  const r = editor.setTags({ kind: 'exercise', id: '1' }, ['PAUSE']);
-  assert.equal(r.ok, false);
-  assert.match(r.errors[0].message, /PAUSE/);
 });
 
 test('schema: rejects unknown fitness level, parameter, gender and weight type', () => {
@@ -66,7 +62,7 @@ test('schema: rejects unknown fitness level, parameter, gender and weight type',
 });
 
 test('schema: rejects an empty name in the editor and non-boolean flags', () => {
-  const editor = edits.create(loadSample());
+  const editor = new edits.Editor(loadSample());
   const r = editor.setField({ kind: 'exercise', id: '1' }, ['name'], '');
   assert.equal(r.ok, false);
   assert.match(r.errors[0].message, /name must not be empty/);

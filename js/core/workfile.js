@@ -1,4 +1,5 @@
-import { isObject } from './model.js';
+import { msg } from './messages.js';
+import { isObject, localDate } from './model.js';
 import { parseValue } from './review.js';
 
 /**
@@ -9,19 +10,20 @@ import { parseValue } from './review.js';
  * @typedef {import('./review.js').ReviewStatus} ReviewStatus
  * @typedef {{ commands: Command[], review: ReviewStatus, fingerprint: string | null, savedAt?: string }} WorkInput
  * @typedef {{ commands: Command[], review: ReviewStatus, fingerprint: string | null, savedAt: string }} Work
- * @typedef {{ ok: true, value: Work, warnings: string[] } | { ok: false, message: string }} WorkParseResult
+ * @typedef {import('./messages.js').Message} Message
+ * @typedef {{ ok: true, value: Work, warnings: Message[] } | ({ ok: false } & Message)} WorkParseResult
  */
 
 export const KIND = 'coach-data-review-work';
-export const VERSION = 1;
-export const FILE_PREFIX = 'coach-review-work';
+const VERSION = 1;
+const FILE_PREFIX = 'coach-review-work';
 /** The app refuses a work file above this size in bytes. */
 export const MAX_FILE_BYTES = 5 * 1024 * 1024;
 export const MAX_COMMANDS = 50_000;
 
-const BAD_FILE = 'This file is not a work file of the coach data reviewer. Please pick a coach-review-work file the app saved.';
-const NEWER_FILE = 'This work file comes from a newer version of the app. Please update the app and try again.';
-const TOO_MANY = `This work file holds more than ${MAX_COMMANDS.toLocaleString('en')} changes. The app does not open it.`;
+const BAD_FILE = { ok: false, ...msg('notWorkFile') };
+const NEWER_FILE = { ok: false, ...msg('newerWorkFile') };
+const TOO_MANY = { ok: false, ...msg('tooManyCommands', { max: MAX_COMMANDS }) };
 const MAX_DEPTH = 32;
 
 // Plain JSON values only: null, booleans, finite numbers, text, lists and plain objects, nested at most MAX_DEPTH deep.
@@ -37,18 +39,11 @@ const isCommand = (c) => isObject(c) && typeof c.method === 'string' && Array.is
   c.args.every((a) => isJsonSafe(a));
 
 /** @param {Date} [date] @returns {string} */
-export const fileName = (date = new Date()) => `${FILE_PREFIX}-${date.toISOString().slice(0, 10)}.json`;
+export const fileName = (date = new Date()) => `${FILE_PREFIX}-${localDate(date)}.json`;
 
 /** @param {WorkInput} work @returns {string} */
 export function serialize({ commands, review, fingerprint, savedAt = new Date().toISOString() }) {
-  const file = {
-    kind: KIND,
-    version: VERSION,
-    savedAt,
-    fingerprint: fingerprint ?? null,
-    commands: structuredClone(commands ?? []),
-    review: structuredClone(review)
-  };
+  const file = { kind: KIND, version: VERSION, savedAt, fingerprint: fingerprint ?? null, commands: commands ?? [], review };
   return `${JSON.stringify(file, null, 2)}\n`;
 }
 
@@ -58,21 +53,21 @@ export function parse(text) {
   try {
     data = JSON.parse(text);
   } catch {
-    return { ok: false, message: BAD_FILE };
+    return { ...BAD_FILE };
   }
-  if (!isObject(data)) return { ok: false, message: BAD_FILE };
+  if (!isObject(data)) return { ...BAD_FILE };
 
-  if (data.kind !== KIND || !Number.isInteger(data.version)) return { ok: false, message: BAD_FILE };
-  if (data.version > VERSION) return { ok: false, message: NEWER_FILE };
-  if (data.version !== VERSION || !Array.isArray(data.commands)) return { ok: false, message: BAD_FILE };
-  if (data.commands.length > MAX_COMMANDS) return { ok: false, message: TOO_MANY };
+  if (data.kind !== KIND || !Number.isInteger(data.version)) return { ...BAD_FILE };
+  if (data.version > VERSION) return { ...NEWER_FILE };
+  if (data.version !== VERSION || !Array.isArray(data.commands)) return { ...BAD_FILE };
+  if (data.commands.length > MAX_COMMANDS) return { ...TOO_MANY };
   const review = parseValue(data.review);
-  if (!review.ok) return { ok: false, message: BAD_FILE };
+  if (!review.ok) return { ...BAD_FILE };
 
   const commands = data.commands.filter(isCommand);
-  const warnings = [...review.warnings];
+  const warnings = [];
   const skipped = data.commands.length - commands.length;
-  if (skipped) warnings.push(`Skipped ${skipped} unreadable change(s).`);
+  if (skipped) warnings.push(msg('skippedCommands', { count: skipped }));
   const value = {
     commands,
     review: review.status,

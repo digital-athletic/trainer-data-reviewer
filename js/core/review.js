@@ -1,15 +1,12 @@
 import { isObject, stats } from './model.js';
 
 /**
- * The review part of the work file. This version sets no review marks. It keeps the
- * marks of a work file from a newer version as they are, so saving does not lose them.
+ * The review part of the work file. The app writes no review marks; `parseValue` copies them unchanged.
  * @typedef {import('./model.js').Dataset} Dataset
  * @typedef {{ version: 1, savedAt: string, datasetCounts: { exercises: number, branches: number },
  *   branches: Record<string, unknown>, issues: Record<string, unknown> }} ReviewStatus
- * @typedef {{ ok: true, status: ReviewStatus, warnings: string[] } | { ok: false, message: string }} ParseResult
+ * @typedef {{ ok: true, status: ReviewStatus } | { ok: false }} ParseResult
  */
-
-const BAD_FILE = 'This file is not a review progress file (review-status.json). Please pick the review-status.json the app saved.';
 
 const now = () => new Date().toISOString();
 
@@ -22,9 +19,8 @@ export function create(ds) {
 /** Validates an already parsed review status. @param {unknown} data @returns {ParseResult} */
 export function parseValue(data) {
   if (!isObject(data) || data.version !== 1 || !isObject(data.branches) || !isObject(data.issues)) {
-    return { ok: false, message: BAD_FILE };
+    return { ok: false };
   }
-  const warnings = [];
   const counts = data.datasetCounts;
   /** @type {ReviewStatus} */
   const status = {
@@ -34,5 +30,5 @@ export function parseValue(data) {
     branches: structuredClone(data.branches),
     issues: structuredClone(data.issues)
   };
-  return { ok: true, status, warnings };
+  return { ok: true, status };
 }

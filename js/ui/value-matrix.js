@@ -2,67 +2,28 @@
 import * as model from '../core/model.js';
 import { PICKLISTS } from '../core/schema.js';
 import { emptyParameter } from '../core/edits.js';
-import { h, notice, plural, term, toast, uid } from './dom.js';
+import { h, notice, toast, uid } from './dom.js';
+import { coreText, has, lang, t } from './i18n.js';
+import { tagGroupLabel } from './terms.js';
 
-export const PARAM_LABELS = {
-  repetition: ['Repetitions', 'Wiederholungen'],
-  duration: ['Duration', 'Dauer'],
-  weight: ['Weight', 'Gewicht'],
-  height: ['Height', 'Höhe']
-};
-const PART_LABELS = {
-  startValue: ['Start value', 'Startwert'],
-  targetValue: ['Target value', 'Zielwert']
-};
-const GENDER_LABELS = { default: 'All', m: 'Men', w: 'Women', k: 'Kids' };
-const LEVEL_LABELS = {
-  default: 'Default', beginner: 'Beginner', intermediate: 'Intermediate',
-  advanced: 'Advanced', professional: 'Pro'
-};
-const TYPE_LABELS = {
-  weightFMax: 'Percent of F-Max (weightFMax)',
-  weightAbsolute: 'Fixed kilograms (weightAbsolute)',
-  Unknown: 'Unknown',
-  Single: 'Single'
-};
 const PARTS = ['startValue', 'targetValue'];
 
 const GENDERS = PICKLISTS.gender;
 const LEVELS = PICKLISTS.trainingLevel;
-const paramName = (p) => PARAM_LABELS[p]?.[0] ?? p;
+// The label of a picklist value under vm.<group>, or the value itself when the dictionary lacks it.
+const label = (group, value) => (has(`vm.${group}.${value}`) ? t(`vm.${group}.${value}`) : value);
+const paramName = (p) => label('param', p);
+const partName = (part) => label('part', part);
+const genderName = (g) => label('gender', g);
+const levelName = (l) => label('level', l);
 
-// Loaded versions of the exercises by id, cached per parsed original array.
-const origCache = new WeakMap();
-
-/** Loaded (unchanged) version of an exercise, or undefined for a new one. @param {model.Dataset} ds @param {string} id */
-export function original(ds, id) {
-  const arr = model.originalData(ds, model.EXERCISES);
-  if (!arr) return undefined;
-  if (!origCache.has(arr)) origCache.set(arr, new Map(arr.filter(Boolean).map((ex) => [String(ex.id), ex])));
-  return origCache.get(arr).get(String(id));
-}
-
-/**
- * True when the field at path differs from the loaded file. New records never count as changed.
- * @param {model.Dataset} ds @param {model.Exercise} rec @param {string[]} path @returns {boolean}
- */
-export function isChanged(ds, rec, path) {
-  const orig = original(ds, rec.id);
-  if (!orig) return false;
-  const a = model.hasAt(orig, path);
-  if (a !== model.hasAt(rec, path)) return true;
-  return a && !model.deepEqual(model.getAt(orig, path), model.getAt(rec, path));
-}
+const { originalExercise, isChanged } = model;
 
 /** @param {unknown} v @returns {string} */
-export const formatValue = (v) => (v == null ? '' : String(v));
+const formatValue = (v) => (v == null ? '' : String(v));
 
 const isResidue = (v) => typeof v === 'string' && v !== '';
-
-function paramLabel(p) {
-  const l = PARAM_LABELS[p];
-  return l ? term(l[0], l[1]) : p;
-}
+const firstMessage = (r) => (r.errors?.[0] ? coreText(r.errors[0]) : t('vm.notAllowed'));
 
 const presentParams = (rec) => (model.isObject(rec.values)
   ? Object.keys(rec.values).filter((p) => model.isObject(rec.values[p]))
@@ -175,7 +136,7 @@ export function build(ctx, id) {
   function commit(cell) {
     const r = ctx.editor.setField(target(), cell.path, cell.input.value);
     if (!r.ok) {
-      setError(cell, `${cell.label}: ${r.errors?.[0]?.message ?? 'This value is not allowed.'}`);
+      setError(cell, t('vm.cellError', { cell: cell.label, message: firstMessage(r) }));
       return false;
     }
     clearError(cell);
@@ -197,12 +158,12 @@ export function build(ctx, id) {
     cell.td.classList.toggle('is-absent', !exists);
     cell.td.classList.toggle('is-changed', changed);
     const hints = [];
-    if (residue) hints.push('Text from the spreadsheet. Replace it with a number or empty the cell.');
-    if (!exists) hints.push('Not in the file yet. Typing a number adds it.');
+    if (residue) hints.push(t('vm.residueHint'));
+    if (!exists) hints.push(t('vm.absentHint'));
     if (changed) {
-      const orig = original(ctx.ds, id);
-      const was = orig && model.hasAt(orig, cell.path) ? `"${formatValue(model.getAt(orig, cell.path))}"` : 'not set';
-      hints.push(`Changed. Loaded value: ${was}.`);
+      const orig = originalExercise(ctx.ds, id);
+      const was = orig && model.hasAt(orig, cell.path) ? `"${formatValue(model.getAt(orig, cell.path))}"` : t('vm.notSetLower');
+      hints.push(t('vm.changedHint', { was }));
     }
     cell.input.title = hints.join(' ');
   }
@@ -230,40 +191,40 @@ export function build(ctx, id) {
     const typePath = ['values', st.param, part, 'type', 'type'];
     const hasType = model.hasAt(r, typePath);
     if (st.param !== 'weight' && !hasType) return null;
-    const [partName] = PART_LABELS[part];
+    const partLabel = partName(part);
     const current = model.getAt(r, typePath);
-    const select = h('select', { class: 'input vm-type', 'data-part': part, 'aria-label': `${partName} weight type` },
-      hasType ? null : h('option', { value: '' }, 'Not set'),
-      PICKLISTS.valueTypeType.map((t) => h('option', { value: t, selected: t === current }, TYPE_LABELS[t] ?? t)));
+    const select = h('select', { class: 'input vm-type', 'data-part': part, 'aria-label': t('vm.typeLabel', { part: partLabel }) },
+      hasType ? null : h('option', { value: '' }, t('vm.notSet')),
+      PICKLISTS.valueTypeType.map((v) => h('option', { value: v, selected: v === current }, label('type', v))));
     select.value = hasType ? current : '';
     select.addEventListener('change', () => {
       if (!select.value) return;
       const res = ctx.editor.setField(target(), typePath, select.value);
-      if (!res.ok) setError(null, `${partName} weight type: ${res.errors[0].message}`);
+      if (!res.ok) setError(null, t('vm.typeError', { part: partLabel, message: firstMessage(res) }));
     });
     return h('label', { class: 'vm-type-row' },
-      h('span', { class: 'small' }, term('Weight type', 'Gewichtstyp')),
+      h('span', { class: 'small' }, tagGroupLabel('EQ_TYPE_')),
       select,
-      isChanged(ctx.ds, r, typePath) ? h('span', { class: 'changed-dot', title: 'Changed' }) : null);
+      isChanged(ctx.ds, r, typePath) ? h('span', { class: 'changed-dot', title: t('common.changed') }) : null);
   }
 
   function gridFor(r, part) {
     const rows = LEVELS.filter((l) => shown.rows.has(l));
     const cols = GENDERS.filter((g) => shown.cols.has(g));
-    const [partName, partDe] = PART_LABELS[part];
+    const partLabel = partName(part);
     const titleId = uid('vm-title');
 
     const tbody = h('tbody', null, rows.map((l, li) => h('tr', null,
-      h('th', { scope: 'row' }, LEVEL_LABELS[l] ?? l),
+      h('th', { scope: 'row' }, levelName(l)),
       cols.map((g, gi) => {
         const path = ['values', st.param, part, g, l];
-        const label = `${partName}, ${GENDER_LABELS[g] ?? g}, ${LEVEL_LABELS[l] ?? l}`;
+        const cellLabel = `${partLabel}, ${genderName(g)}, ${levelName(l)}`;
         const input = h('input', {
           type: 'text', inputmode: 'decimal', class: 'vm-cell', autocomplete: 'off',
-          'data-cell': `${part}.${g}.${l}`, 'aria-label': label
+          'data-cell': `${part}.${g}.${l}`, 'aria-label': cellLabel
         });
         const td = h('td', null, input);
-        const cell = { key: `${part}.${g}.${l}`, part, gi, li, path, input, td, label, lastShown: formatValue(model.getAt(r, path)) };
+        const cell = { key: `${part}.${g}.${l}`, part, gi, li, path, input, td, label: cellLabel, lastShown: formatValue(model.getAt(r, path)) };
         input.value = cell.lastShown;
         input.addEventListener('change', () => commit(cell));
         input.addEventListener('keydown', (e) => onCellKey(cell, e));
@@ -273,27 +234,27 @@ export function build(ctx, id) {
       }))));
 
     return h('section', { class: 'vm-grid', 'aria-labelledby': titleId },
-      h('h4', { class: 'vm-grid__title', id: titleId }, term(partName, partDe)),
+      h('h4', { class: 'vm-grid__title', id: titleId }, partLabel),
       typeRowFor(r, part),
       h('div', { class: 'vm-table-wrap' },
         h('table', { class: 'vm-table', 'aria-labelledby': titleId },
           h('thead', null, h('tr', null,
-            h('th', { scope: 'col', class: 'vm-corner' }, h('span', { class: 'sr-only' }, 'Fitness level')),
-            cols.map((g) => h('th', { scope: 'col' }, GENDER_LABELS[g] ?? g)))),
+            h('th', { scope: 'col', class: 'vm-corner' }, h('span', { class: 'sr-only' }, t('vm.fitnessLevel'))),
+            cols.map((g) => h('th', { scope: 'col' }, genderName(g))))),
           tbody)));
   }
 
   function paintSlots(r) {
     const ps = presentParams(r);
-    for (const t of tabs) {
-      t.dot.hidden = !isChanged(ctx.ds, r, ['values', t.param]);
-      t.warn.hidden = residueCount(r, t.param) === 0;
+    for (const tab of tabs) {
+      tab.dot.hidden = !isChanged(ctx.ds, r, ['values', tab.param]);
+      tab.warn.hidden = residueCount(r, tab.param) === 0;
     }
     allRevertSlot?.replaceChildren(...(isChanged(ctx.ds, r, ['values'])
       ? [h('button', {
         type: 'button', class: 'link-btn small', 'data-fkey': 'vm-revert-all',
         onclick: () => ctx.editor.revertField(target(), ['values'])
-      }, 'Revert all values')]
+      }, t('vm.revertAll'))]
       : []));
     if (revertSlot && st.param && ps.includes(st.param)) {
       const { param } = st;
@@ -302,14 +263,13 @@ export function build(ctx, id) {
           h('button', {
             type: 'button', class: 'link-btn small', 'data-fkey': 'vm-revert-param',
             onclick: () => ctx.editor.revertField(target(), ['values', param])
-          }, `Revert ${paramName(param).toLowerCase()}`)]
+          }, t('vm.revertParam', { param: lang() === 'en' ? paramName(param).toLowerCase() : paramName(param) }))]
         : []));
     }
     if (residueSlot && st.param) {
       const n = residueCount(r, st.param);
       residueSlot.replaceChildren(...(n
-        ? [notice('warning', `${plural(n, 'cell')} with text instead of a number`,
-          h('p', null, 'These cells hold text left over from the spreadsheet. They have a yellow background. Replace the text with a number, or empty the cell.'))]
+        ? [notice('warning', t('vm.residueTitle', { count: n }), h('p', null, t('vm.residueBody')))]
         : []));
     }
   }
@@ -317,7 +277,7 @@ export function build(ctx, id) {
   function addParam(param) {
     const res = ctx.editor.setField(target(), ['values', param], emptyParameter());
     if (!res.ok) {
-      toast(res.errors[0].message, { tone: 'error' });
+      toast(firstMessage(res), { tone: 'error' });
       return;
     }
     st.param = param;
@@ -345,7 +305,7 @@ export function build(ctx, id) {
 
     const missing = PICKLISTS.trainingParameter.filter((p) => !ps.includes(p));
     const addBox = missing.length ? h('div', { class: 'vm-add' },
-      h('span', { class: 'small muted' }, 'Add parameter:'),
+      h('span', { class: 'small muted' }, t('vm.addParam')),
       missing.map((p) => h('button', {
         type: 'button', class: 'btn btn--small', 'data-fkey': `vm-add-${p}`, onclick: () => addParam(p)
       }, '+ ', paramName(p)))) : null;
@@ -354,18 +314,16 @@ export function build(ctx, id) {
 
     if (!ps.length) {
       root.append(h('div', { class: 'vm-empty' },
-        h('p', null, r.values === null
-          ? 'This exercise has no values yet. Add a parameter to enter start and target values.'
-          : 'This exercise has no training parameters. Add one to enter start and target values.'),
+        h('p', null, t(r.values === null ? 'vm.emptyNull' : 'vm.emptyNone')),
         addBox, allRevertSlot));
       paintSlots(r);
       return;
     }
 
-    const tablist = h('div', { class: 'vm-tabs', role: 'tablist', 'aria-label': 'Training parameters' });
+    const tablist = h('div', { class: 'vm-tabs', role: 'tablist', 'aria-label': t('vm.paramsLabel') });
     for (const [i, p] of ps.entries()) {
-      const dot = h('span', { class: 'changed-dot', title: 'Changed', hidden: true });
-      const warn = h('span', { class: 'vm-tab__warn', title: 'Has text cells', hidden: true }, '!');
+      const dot = h('span', { class: 'changed-dot', title: t('common.changed'), hidden: true });
+      const warn = h('span', { class: 'vm-tab__warn', title: t('vm.textCells'), hidden: true }, '!');
       const btn = h('button', {
         type: 'button', role: 'tab', class: 'vm-tab', 'data-fkey': `vm-tab-${p}`,
         'aria-selected': String(p === st.param), tabindex: p === st.param ? '0' : '-1',
@@ -395,17 +353,17 @@ export function build(ctx, id) {
 
     const panel = h('div', { class: 'vm-panel', role: 'tabpanel', 'aria-label': paramName(st.param) },
       h('div', { class: 'vm-panel__head' },
-        h('h3', { class: 'vm-panel__title' }, paramLabel(st.param)),
+        h('h3', { class: 'vm-panel__title' }, paramName(st.param)),
         revertSlot,
         h('span', { class: 'spacer' }),
-        h('label', { class: 'check' }, showAll, 'Show all cells')),
+        h('label', { class: 'check' }, showAll, t('vm.showAll'))),
       residueSlot,
       h('div', { class: 'vm-grids' }, PARTS.map((part) => gridFor(r, part))),
       errorBox,
       h('p', { class: 'small muted' },
-        'Enter a number such as 12 or 2,5. Leave a cell empty when the value does not apply. ',
-        h('kbd', null, 'Tab'), ' moves to the next cell, ', h('kbd', null, 'Enter'), ' saves and moves down, ',
-        h('kbd', null, 'Esc'), ' undoes your typing. Cells with a dashed border are not in the file yet.'));
+        t('vm.help'),
+        h('kbd', null, t('keys.tab')), t('vm.helpTab'), h('kbd', null, t('keys.enter')), t('vm.helpEnter'),
+        h('kbd', null, t('keys.esc')), t('vm.helpEsc')));
 
     root.append(h('div', { class: 'vm-toolbar' }, tablist, h('span', { class: 'spacer' }), allRevertSlot), panel);
     if (addBox) root.append(addBox);

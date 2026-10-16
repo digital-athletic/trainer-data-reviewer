@@ -1,6 +1,5 @@
 # Runs the specs and publishes the app on GitHub Pages.
-# GitHub reads this file only at the repository root, so it takes effect once
-# this folder is its own repository.
+# GitHub runs workflows from `.github/workflows/` at the repository root.
 name: Pages
 
 on:
@@ -42,7 +41,7 @@ jobs:
       - name: Collect the site files
         run: |
           mkdir _site
-          cp -r index.html .nojekyll css js _site/
+          cp -r index.html css js _site/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site

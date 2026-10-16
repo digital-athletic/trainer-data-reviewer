@@ -147,7 +147,6 @@
   padding: var(--space-3); border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper);
 }
 .vm-grid__title { font-size: var(--text-sm); text-transform: uppercase; letter-spacing: 0.05em; }
-.vm-grid__title .term__de { text-transform: none; letter-spacing: 0; }
 .vm-type-row { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
 .vm-type { width: auto; min-height: 34px; padding: 4px 30px 4px 8px; font-size: var(--text-sm); }
 .vm-table-wrap { overflow-x: auto; }
