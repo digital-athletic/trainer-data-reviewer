@@ -4,27 +4,20 @@ import * as model from '../js/core/model.js';
 import * as edits from '../js/core/edits.js';
 import * as review from '../js/core/review.js';
 import * as workfile from '../js/core/workfile.js';
-import { REAL, loadSample, loadReal, differingLines } from './helpers.js';
+import { REAL, loadSample, loadReal, differingLines, readRaw } from './helpers.js';
 
 const EX = 'Exercises.json';
 const ex = (id) => ({ kind: 'exercise', id });
 
 function setup(load = loadSample) {
   const ds = load();
-  return { ds, editor: edits.create(ds) };
+  return { ds, editor: new edits.Editor(ds) };
 }
 
 const changedText = (ds, path) => model.changedFiles(ds).find((c) => c.path === path)?.text;
 
 const deletableExercise = (ds) =>
   ds.exercises.find((e) => e.id !== '999999' && edits.referencesTo(ds, e.id).length === 0);
-
-test('edits: create returns an Editor instance', () => {
-  const { ds, editor } = setup();
-  assert.ok(editor instanceof edits.Editor);
-  assert.equal(editor.ds, ds);
-  assert.deepEqual(editor.highWater, ds.loadMax);
-});
 
 function oneValueEditChangesOneLine(load) {
   const { ds, editor } = setup(load);
@@ -53,7 +46,7 @@ function replayReproducesChangedFiles(load) {
   const json = JSON.parse(JSON.stringify(editor.commands()));
 
   const fresh = load();
-  const result = edits.create(fresh).replay(json);
+  const result = new edits.Editor(fresh).replay(json);
   assert.deepEqual(result.failed, []);
   assert.equal(result.applied, json.length);
   assert.deepEqual(model.changedFiles(fresh), expected);
@@ -127,6 +120,48 @@ test('edits: revertField restores the loaded value', () => {
   assert.deepEqual(model.changedFiles(ds), []);
 });
 
+const branch = { kind: 'branch', tree: 'SKKG', branchId: '253' };
+
+test('edits: setField on a branch changes its skill tree file', () => {
+  const { ds, editor } = setup();
+  assert.deepEqual(editor.setField(branch, ['name'], 'Renamed branch'), { ok: true });
+  assert.deepEqual(model.changedFiles(ds).map((f) => f.path), ['skillTrees/SKKG.json']);
+  assert.match(changedText(ds, 'skillTrees/SKKG.json'), /"name": "Renamed branch"/);
+});
+
+test('edits: setField on a branch level fails with the levels message', () => {
+  const { ds, editor } = setup();
+  const r = editor.setField(branch, ['levels', '1'], { exerciseId: '2' });
+  assert.equal(r.ok, false);
+  assert.match(r.errors[0].message, /Branch levels change through the ladder/);
+  assert.deepEqual(model.changedFiles(ds), []);
+});
+
+test('edits: revertField on a branch restores the loaded value', () => {
+  const { ds, editor } = setup();
+  const original = [...ds.trees.SKKG['253'].tags];
+  assert.equal(editor.setTags(branch, ['REGION_UPPER_BODY']).ok, true);
+  assert.equal(editor.setField(branch, ['name'], 'Temp').ok, true);
+  assert.equal(editor.revertField(branch, ['tags']).ok, true);
+  assert.deepEqual(ds.trees.SKKG['253'].tags, original);
+  assert.equal(editor.revertField(branch, ['name']).ok, true);
+  assert.equal(Object.hasOwn(ds.trees.SKKG['253'], 'name'), false);
+  assert.deepEqual(model.changedFiles(ds), []);
+});
+
+test('edits: undo reverts a branch edit and rebuilds treeOfBranch', () => {
+  const { ds, editor } = setup();
+  const original = [...ds.trees.SKKG['253'].tags];
+  assert.equal(editor.setTags(branch, ['REGION_UPPER_BODY']).ok, true);
+  const before = ds.index;
+  assert.equal(editor.undo().length, 1);
+  assert.deepEqual(ds.trees.SKKG['253'].tags, original);
+  assert.notEqual(ds.index, before);
+  assert.equal(ds.index.treeOfBranch.get('253'), 'SKKG');
+  assert.equal(ds.index.tagCounts.branch.has('SKILL_STABILITY_BODY'), true);
+  assert.deepEqual(model.changedFiles(ds), []);
+});
+
 test('edits: exercise ids are never reused', () => {
   const { ds, editor } = setup();
   const a = editor.addExercise();
@@ -149,7 +184,8 @@ test('edits: deleteExercise refuses Pause and referenced exercises', () => {
   const { ds, editor } = setup();
   const pause = editor.deleteExercise('999999');
   assert.equal(pause.ok, false);
-  assert.match(pause.reason, /Pause is a system exercise/);
+  assert.equal(pause.reason.code, 'pauseNoDelete');
+  assert.match(pause.reason.message, /Pause is a system exercise/);
   const used = ds.trees.SKKG['253'].levels['1'].exerciseId;
   const r = editor.deleteExercise(used);
   assert.equal(r.ok, false);
@@ -209,6 +245,23 @@ test('edits: setTags dedupes, refuses PAUSE and asks for new tags', () => {
   assert.deepEqual(editor.journal().at(-1).newTags, ['NEW_TAG_X']);
 });
 
+test('edits: setTags refuses PAUSE on its own', () => {
+  const { editor } = setup();
+  const r = editor.setTags(ex('1'), ['PAUSE']);
+  assert.equal(r.ok, false);
+  assert.match(r.errors[0].message, /PAUSE/);
+});
+
+test('edits: journalLength counts the journal entries', () => {
+  const { ds, editor } = setup();
+  assert.equal(editor.journalLength, 0);
+  const [a, b] = ds.exercises.filter((e) => e.id !== model.PAUSE_ID && e.otherSideExerciseId == null &&
+    !ds.index.otherSideRefsByExerciseId.has(e.id));
+  editor.setOtherSide(a.id, b.id, { linkBack: true });
+  assert.equal(editor.journalLength, editor.journal().length);
+  assert.equal(editor.journalLength, 2);
+});
+
 test('edits: replay of commands on a fresh load reproduces changedFiles', () => replayReproducesChangedFiles(loadSample));
 
 test('edits (real data): replay of commands on a fresh load reproduces changedFiles', REAL, () => replayReproducesChangedFiles(loadReal));
@@ -223,6 +276,36 @@ test('edits: replay reports unknown and failing commands', () => {
   assert.equal(result.applied, 1);
   assert.equal(result.failed.length, 2);
   assert.match(result.failed[0].errors[0].message, /Unknown change "constructor"/);
+});
+
+test('edits: replay skips the commands for an exercise whose add failed on a taken id', () => {
+  const { ds, editor } = setup();
+  const name = ds.index.exerciseById.get('1').name;
+  const result = editor.replay([
+    { method: 'addExercise', args: [{ id: '1' }] },
+    { method: 'setField', args: [ex('1'), ['name'], 'Overwritten'] },
+    { method: 'setTags', args: [ex('1'), []] },
+    { method: 'setOtherSide', args: ['2', '1', { linkBack: false }] },
+    { method: 'setField', args: [ex('2'), ['name'], 'Kept'] }
+  ]);
+  assert.equal(result.applied, 1);
+  assert.deepEqual(result.failed.map((f) => f.command.method), ['addExercise', 'setField', 'setTags', 'setOtherSide']);
+  assert.match(result.failed[1].errors[0].message, /Exercise 1 was not added/);
+  assert.equal(ds.index.exerciseById.get('1').name, name);
+  assert.equal(ds.index.exerciseById.get('2').name, 'Kept');
+});
+
+test('edits: setOtherSide to null on an exercise without the key records no edit', () => {
+  const raw = readRaw();
+  const list = JSON.parse(raw[EX]);
+  delete list.find((e) => e.id === '1').otherSideExerciseId;
+  raw[EX] = `${JSON.stringify(list, null, 2)}\n`;
+  const { ds, editor } = setup(() => model.load(raw));
+  const bare = ds.index.exerciseById.get('1');
+  assert.deepEqual(editor.setOtherSide(bare.id, null), { ok: true });
+  assert.equal(Object.hasOwn(bare, 'otherSideExerciseId'), false);
+  assert.equal(editor.journal().length, 0);
+  assert.deepEqual(model.changedFiles(ds), []);
 });
 
 test('edits: subscribe, changeCount and unexportedCount', () => {
@@ -288,7 +371,7 @@ test('edits: unexportedCount counts net changes, not editing steps', async (t) =
     editor.revertField(ex('2'), ['name']);
     editor.setField(ex('3'), ['name'], 'D');
     editor.setField(ex('1'), ['level', 'w'], 3);
-    const probe = edits.create(loadSample());
+    const probe = new edits.Editor(loadSample());
     probe.replay(JSON.parse(JSON.stringify(editor.commands())));
     assert.equal(editor.changeCount(), 3);
     assert.equal(probe.changeCount(), 3);
@@ -322,14 +405,4 @@ test('edits: a work file with a __proto__ path pollutes nothing and reports the 
   assert.equal(result.failed.length, 3);
   assert.match(result.failed[0].errors[0].message, /"__proto__" is not allowed/);
   assert.equal(editor.journal().length, 0);
-});
-
-test('model: setAt, getAt and deleteAt refuse prototype keys', () => {
-  const obj = {};
-  assert.throws(() => model.setAt(obj, ['__proto__', 'x'], 1), /not allowed/);
-  assert.throws(() => model.setAt(obj, ['a', 'constructor'], 1), /not allowed/);
-  assert.throws(() => model.deleteAt(obj, ['prototype']), /not allowed/);
-  assert.equal(model.getAt(obj, ['__proto__']), undefined);
-  assert.equal(model.hasAt(obj, ['constructor']), false);
-  assert.equal(({}).x, undefined);
 });

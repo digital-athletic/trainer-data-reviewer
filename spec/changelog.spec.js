@@ -1,16 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as edits from '../js/core/edits.js';
+import * as model from '../js/core/model.js';
 import * as changelog from '../js/core/changelog.js';
 import { PINNED_TESTS } from '../js/core/config.js';
 import { REAL, loadSample, loadReal } from './helpers.js';
 
 const ex = (id) => ({ kind: 'exercise', id });
 const QUAD = PINNED_TESTS.exerciseRegistry.quadricepsTag;
+const LINE_SEP = String.fromCharCode(0x2028);
+const PARA_SEP = String.fromCharCode(0x2029);
 
 function setup(load = loadSample) {
   const ds = load();
-  return { ds, editor: edits.create(ds) };
+  return { ds, editor: new edits.Editor(ds) };
 }
 
 test('changelog: lists repo path, record, field, old and new, and new tags', () => {
@@ -33,6 +36,16 @@ test('changelog: no edits give the empty sections', () => {
   assert.match(md, /No changes\./);
   assert.equal(md.match(/^None\.$/gm).length, 2);
   assert.ok(md.endsWith('\n'));
+});
+
+test('changelog: build defaults to the local date and accepts precomputed changes', () => {
+  const { ds, editor } = setup();
+  editor.setField(ex('1'), ['name'], 'Renamed');
+  const changes = editor.netChanges();
+  const md = changelog.build(editor, ds, { changes });
+  assert.match(md, new RegExp(`^# Data changes ${model.localDate()}$`, 'm'));
+  assert.equal(md, changelog.build(editor, ds, { date: model.localDate() }));
+  assert.deepEqual(changelog.pinnedTestNotes(editor, ds, changes), changelog.pinnedTestNotes(editor, ds));
 });
 
 test('changelog: escapes pipes and prints an absent value as (none)', () => {
@@ -64,6 +77,17 @@ test('changelog: escapes Markdown and HTML characters in a cell', () => {
   assert.ok(row.endsWith('| "\\<b\\>\\`x\\`\\</b\\> \\[y\\](z) a\\\\\\\\b" |'), row);
 });
 
+test('changelog: escapes & * _ ~ ! and puts line and paragraph separators on one line', () => {
+  const { ds, editor } = setup();
+  editor.setField(ex('1'), ['name'], `a&b *c* _d_ ~e~ !f${LINE_SEP}g${PARA_SEP}h`);
+  editor.setField({ kind: 'branch', tree: 'SKKG', branchId: '253' }, ['x\r\ny\rz\nw'], 1);
+  const md = changelog.build(editor, ds, { date: '2026-10-15' });
+  const row = md.split('\n').find((l) => l.includes('exercise:1 | name |'));
+  assert.ok(row.endsWith('| "a\\&b \\*c\\* \\_d\\_ \\~e\\~ \\!f g h" |'), row);
+  assert.ok(md.includes('| branch:SKKG/253 | x y z w | (none) | 1 |'), md);
+  assert.ok(![...md].some((ch) => ch === '\r' || ch === LINE_SEP || ch === PARA_SEP));
+});
+
 test('changelog: a plain value edit produces no pinned-test note', () => {
   const { ds, editor } = setup();
   editor.setField(ex('1'), ['values', 'weight', 'startValue', 'default', 'advanced'], 45);
@@ -82,7 +106,18 @@ test('changelog: add and delete carry the count note and the reserved id note', 
   editor.deleteExercise(victim.id);
   const notes = changelog.pinnedTestNotes(editor, ds);
   assert.ok(notes.some((n) => n.includes(`${start - 1} exercises`)));
-  assert.ok(notes.some((n) => n.includes(`athlete data in user_exercises (exercise_id) may reference id ${victim.id}`)));
+  assert.ok(notes.some((n) => n.includes(`athlete data in user_exercises (exercise_id) may reference id \`${victim.id}\``)));
+});
+
+test('changelog: a change on the pinned branch gets its note', () => {
+  const { ds, editor } = setup();
+  const bid = PINNED_TESTS.skillTreeRegistry.pinnedBranchId;
+  const tree = ds.index.treeOfBranch.get(bid);
+  assert.ok(tree, 'fixture holds the pinned branch');
+  assert.equal(editor.setTags({ kind: 'branch', tree, branchId: bid }, ['REGION_LOWER_BODY']).ok, true);
+  const notes = changelog.pinnedTestNotes(editor, ds);
+  assert.ok(notes.some((n) => n === `Branch ${bid} changed. Check the branch ${bid} test in ` +
+    `${PINNED_TESTS.skillTreeRegistry.file}:${PINNED_TESTS.skillTreeRegistry.pinnedBranchLines}.`), notes.join('\n'));
 });
 
 test('changelog: a MUSCLE_QUADRICEPS tag change gets a note', () => {

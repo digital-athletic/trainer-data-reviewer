@@ -1,36 +1,41 @@
 // Exercises tab: filterable table (#/exercises) and the detail page (#/exercises/<id>).
 import * as model from '../core/model.js';
 import * as query from '../core/query.js';
-import { debounce, emptyState, fmt, h, highlight, Pager, plural, term, toast, uid } from './dom.js';
+import { debounce, emptyState, fmt, h, highlight, Pager, toast, uid } from './dom.js';
 import * as exerciseDetail from './exercise-detail.js';
+import { coreText, t } from './i18n.js';
 import { registerView } from './registry.js';
 import { exerciseHash } from './routes.js';
+import { tagGroupLabel, tagValueLabel } from './terms.js';
 
 const PAGE_SIZE = 50;
 
+const { FACET_PREFIX } = query;
+// label and any are dictionary keys. A facet with a prefix takes the label of its tag group.
 const FACETS = [
-  { key: 'tree', label: 'Skill tree', de: null, any: 'Any skill tree' },
-  { key: 'skill', label: 'Skill', de: null, any: 'Any skill', prefix: 'SKILL_' },
-  { key: 'region', label: 'Region', de: null, any: 'Any region', prefix: 'REGION_' },
-  { key: 'eq', label: 'Equipment', de: 'Ausrüstung', any: 'Any equipment', prefix: 'EQ_' },
-  { key: 'place', label: 'Training place', de: 'Trainingsort', any: 'Any place', prefix: 'PLACE_' }
+  { key: 'tree', label: 'exl.tree', any: 'exl.anyTree' },
+  { key: 'skill', any: 'exl.anySkill', prefix: FACET_PREFIX.skill },
+  { key: 'region', any: 'exl.anyRegion', prefix: FACET_PREFIX.region },
+  { key: 'eq', any: 'exl.anyEquipment', prefix: FACET_PREFIX.eq },
+  { key: 'place', any: 'exl.anyPlace', prefix: FACET_PREFIX.place }
 ];
 const TRI = [
-  { key: 'hasVideo', label: 'Video', yes: 'With video', no: 'Without video' },
-  { key: 'hasDescription', label: 'Description', de: 'Beschreibung', yes: 'With description', no: 'Without description' }
+  { key: 'hasVideo', label: 'exl.video', yes: 'exl.withVideo', no: 'exl.withoutVideo' },
+  { key: 'hasDescription', label: 'exl.description', yes: 'exl.withDescription', no: 'exl.withoutDescription' }
 ];
 const USAGE = [
-  { value: 'all', label: 'All' },
-  { value: 'used', label: 'Used in a branch' },
-  { value: 'orphan', label: 'Not used' }
+  { value: 'all', label: 'exl.usageAll' },
+  { value: 'used', label: 'exl.usageUsed' },
+  { value: 'orphan', label: 'exl.usageOrphan' }
 ];
+const facetName = (f) => (f.prefix ? tagGroupLabel(f.prefix) : t(f.label));
 
 const defaultCriteria = () => ({
   text: '', tree: '', skill: '', region: '', eq: '', place: '', usage: 'all',
   hasVideo: null, hasDescription: null
 });
 
-// Survives navigation between the table and a detail page; reset when a new folder loads.
+// The list keeps this state between the table and a detail page and resets it when a new Exercises.json loads.
 const state = { ds: null, criteria: defaultCriteria(), page: 0, lastId: null, returning: false, pendingFocus: null, current: null };
 
 function resetFor(ds) {
@@ -38,38 +43,37 @@ function resetFor(ds) {
   Object.assign(state, { ds, criteria: defaultCriteria(), page: 0, lastId: null, returning: false, pendingFocus: null });
 }
 
-function humanTag(tag, prefix) {
-  const s = (prefix && tag.startsWith(prefix) ? tag.slice(prefix.length) : tag).replace(/_/g, ' ').toLowerCase();
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
-const facetLabel = (f, value) => (f.prefix ? humanTag(value, f.prefix) : value);
+const facetLabel = (f, value) => (f.prefix ? tagValueLabel(f.key, value, f.prefix) : value);
 const without = (c, key) => ({ ...c, [key]: defaultCriteria()[key] });
 
 /** Adds an exercise and opens it with the name field focused. @param {import('./registry.js').Ctx} ctx */
-export function addExercise(ctx) {
+function addExercise(ctx) {
   const r = ctx.editor.addExercise();
   if (!r.ok) {
-    toast(r.errors?.[0]?.message ?? 'The exercise could not be added.', { tone: 'error' });
+    toast(r.errors?.[0] ? coreText(r.errors[0]) : t('exl.addFailed'), { tone: 'error' });
     return;
   }
   state.pendingFocus = r.id;
-  toast(`Exercise ${r.id} added. Give it a name and values.`);
+  toast(t('exl.added', { id: r.id }));
   ctx.navigate(exerciseHash(r.id));
 }
 
 const fmtLevel = (v) => (v == null ? '-' : String(v));
 
-function mediaMark(on, text, what) {
-  const label = on ? `Has a ${what}` : `No ${what}`;
+/** @param {boolean} on @param {string} textKey @param {string} onKey @param {string} offKey */
+function mediaMark(on, textKey, onKey, offKey) {
+  const label = t(on ? onKey : offKey);
   return h('span', { class: ['exl-mark', on ? 'is-on' : ''], title: label },
-    h('span', { 'aria-hidden': 'true' }, text),
+    h('span', { 'aria-hidden': 'true' }, t(textKey)),
     h('span', { class: 'sr-only' }, label));
 }
 
 /* ---------- Table ---------- */
 
 function renderTable(root, ctx, signal) {
+  // The skill tree column and filter show only for a dataset with skill trees.
+  const hasTrees = ctx.ds.treeNames.length > 0;
+  const facets = hasTrees ? FACETS : FACETS.filter((f) => f.key !== 'tree');
   let rows = query.buildRows(ctx.ds);
   let facetValues = query.facetValues(ctx.ds);
   let c = state.criteria;
@@ -78,8 +82,8 @@ function renderTable(root, ctx, signal) {
 
   const search = h('input', {
     type: 'search', class: 'search', 'data-search': '', autocomplete: 'off', value: c.text,
-    placeholder: 'Search by id or name, for example 429 or Kniebeuge',
-    'aria-label': 'Search exercises by id, name or display name'
+    placeholder: t('exl.searchPlaceholder'),
+    'aria-label': t('exl.searchLabel')
   });
   const searchLater = debounce(() => {
     c.text = search.value;
@@ -96,27 +100,27 @@ function renderTable(root, ctx, signal) {
 
   /** @type {Map<string, HTMLSelectElement>} */
   const selects = new Map();
-  const selectField = (key, label, de, onChange) => {
+  const selectField = (key, label, onChange) => {
     const id = uid('exl-facet');
     const sel = /** @type {HTMLSelectElement} */ (h('select', { class: 'input', id }));
     sel.addEventListener('change', () => onChange(sel.value));
     selects.set(key, sel);
-    return h('div', { class: 'field' }, h('label', { class: 'field__label', for: id }, term(label, de)), sel);
+    return h('div', { class: 'field' }, h('label', { class: 'field__label', for: id }, label), sel);
   };
   const facetBox = h('div', { class: 'exl-facets' },
-    FACETS.map((f) => selectField(f.key, f.label, f.de, (v) => {
+    facets.map((f) => selectField(f.key, facetName(f), (v) => {
       c[f.key] = v;
       apply();
     })),
-    TRI.map((t) => selectField(t.key, t.label, t.de, (v) => {
-      c[t.key] = { yes: true, no: false }[v] ?? null;
+    TRI.map((tri) => selectField(tri.key, t(tri.label), (v) => {
+      c[tri.key] = { yes: true, no: false }[v] ?? null;
       apply();
     })));
 
   const usageName = uid('exl-usage');
   const usageInputs = new Map();
   const usageCounts = new Map();
-  const usageBox = h('div', { class: 'segmented exl-usage', role: 'radiogroup', 'aria-label': 'Usage in branches' },
+  const usageBox = h('div', { class: 'segmented exl-usage', role: 'radiogroup', 'aria-label': t('exl.usageLabel') },
     USAGE.map((u) => {
       const input = h('input', { type: 'radio', name: usageName, value: u.value, checked: c.usage === u.value });
       input.addEventListener('change', () => {
@@ -128,23 +132,23 @@ function renderTable(root, ctx, signal) {
       // A nested span would pick up the .segmented span styles.
       const count = h('small', { class: 'exl-usage__count num' });
       usageCounts.set(u.value, count);
-      return h('label', null, input, h('span', null, u.label, count));
+      return h('label', null, input, h('span', null, t(u.label), count));
     }));
 
-  const chips = h('div', { class: 'chip-group exl-active', 'aria-label': 'Active filters' });
+  const chips = h('div', { class: 'chip-group exl-active', 'aria-label': t('exl.activeFilters') });
   const resultLine = h('p', { class: 'exl-result num', role: 'status', 'aria-live': 'polite' });
-  const clearBtn = h('button', { type: 'button', class: 'btn btn--small', onclick: clearAll }, 'Clear all filters');
+  const clearBtn = h('button', { type: 'button', class: 'btn btn--small', onclick: clearAll }, t('exl.clearAll'));
 
   const tbody = h('tbody');
   const table = h('table', { class: 'table exl-table' },
-    h('caption', { class: 'sr-only' }, 'Exercises. Press Enter on a row to open it.'),
+    h('caption', { class: 'sr-only' }, t('exl.caption')),
     h('thead', null, h('tr', null,
-      h('th', { scope: 'col', class: 'num' }, 'Id'),
-      h('th', { scope: 'col' }, 'Exercise'),
-      h('th', { scope: 'col', class: 'num', title: 'Exercise level for men / women' }, 'Level m/w'),
-      h('th', { scope: 'col' }, 'Skill trees'),
-      h('th', { scope: 'col' }, 'Used in'),
-      h('th', { scope: 'col' }, 'Video / text'))),
+      h('th', { scope: 'col', class: 'num' }, t('exl.colId')),
+      h('th', { scope: 'col' }, t('exl.colExercise')),
+      h('th', { scope: 'col', class: 'num', title: t('exl.colLevelTitle') }, t('exl.colLevel')),
+      hasTrees ? h('th', { scope: 'col' }, t('exl.colTrees')) : null,
+      h('th', { scope: 'col' }, t('exl.colUsedIn')),
+      h('th', { scope: 'col' }, t('exl.colMedia')))),
     tbody);
   const tableWrap = h('div', { class: 'table-wrap exl-wrap' }, table);
   const emptySlot = h('div');
@@ -164,7 +168,7 @@ function renderTable(root, ctx, signal) {
     ctx.navigate(exerciseHash(id));
   }
 
-  // One listener set on the table body serves every row.
+  // One click and one keydown listener on `tbody` open any row.
   tbody.addEventListener('click', (e) => {
     const tr = e.target.closest('tr[data-id]');
     if (!tr) return;
@@ -184,23 +188,23 @@ function renderTable(root, ctx, signal) {
     const name = ex?.name && ex.name !== row.label ? ex.name : null;
     const isPause = row.id === model.PAUSE_ID;
     const trees = row.trees.slice(0, 3);
-    let usedIn = h('span', { class: 'badge badge--advisory' }, 'Not used');
-    if (isPause) usedIn = h('span', { class: 'muted small' }, 'System');
-    else if (row.branchCount) usedIn = h('span', { class: 'num' }, plural(row.branchCount, 'branch', 'branches'));
+    let usedIn = h('span', { class: 'badge badge--advisory' }, t('exl.usageOrphan'));
+    if (isPause) usedIn = h('span', { class: 'muted small' }, t('exl.system'));
+    else if (row.branchCount) usedIn = h('span', { class: 'num' }, t('count.branch', { count: row.branchCount }));
     return h('tr', { class: 'is-clickable', tabindex: '0', 'data-id': row.id },
       h('td', { class: 'num mono exl-id' }, row.id),
       h('td', { class: 'exl-label' },
-        h('a', { href: exerciseHash(row.id), tabindex: '-1' }, row.label || '(no name)'),
+        h('a', { href: exerciseHash(row.id), tabindex: '-1' }, row.label || t('common.noName')),
         name ? h('span', { class: 'exl-name' }, name) : null),
       h('td', { class: 'num' }, `${fmtLevel(row.levelM)} / ${fmtLevel(row.levelW)}`),
-      h('td', null, trees.length
+      hasTrees ? h('td', null, trees.length
         ? h('span', { class: 'exl-trees' }, trees.map((t) => h('span', { class: 'exl-tree' }, t)),
           row.trees.length > 3 ? h('span', { class: 'muted small' }, `+${row.trees.length - 3}`) : null)
-        : h('span', { class: 'muted' }, '-')),
+        : h('span', { class: 'muted' }, '-')) : null,
       h('td', null, usedIn),
       h('td', { class: 'exl-media' },
-        mediaMark(row.hasVideo, 'Video', 'video'),
-        mediaMark(row.hasDescription, 'Text', 'description')));
+        mediaMark(row.hasVideo, 'exl.markVideo', 'exl.hasVideo', 'exl.noVideo'),
+        mediaMark(row.hasDescription, 'exl.markText', 'exl.hasDescription', 'exl.noDescription')));
   }
 
   function fillSelect(sel, options, current) {
@@ -211,7 +215,7 @@ function renderTable(root, ctx, signal) {
   }
 
   function refreshFacets() {
-    for (const f of FACETS) {
+    for (const f of facets) {
       const base = query.filter(rows, without(c, f.key));
       const values = facetValues[f.key] ?? [];
       const counts = new Map(values.map((v) => [v, 0]));
@@ -223,18 +227,18 @@ function renderTable(root, ctx, signal) {
       const opts = values.map((v) => ({ value: v, label: facetLabel(f, v), count: counts.get(v) }));
       if (f.prefix) opts.sort((a, b) => a.label.localeCompare(b.label));
       fillSelect(selects.get(f.key), [
-        { value: '', label: `${f.any} (${fmt(base.length)})` },
-        ...opts.map((o) => ({ value: o.value, label: `${o.label} (${fmt(o.count)})`, disabled: o.count === 0 && o.value !== c[f.key] }))
+        { value: '', label: t('exl.option', { label: t(f.any), count: base.length }) },
+        ...opts.map((o) => ({ value: o.value, label: t('exl.option', { label: o.label, count: o.count }), disabled: o.count === 0 && o.value !== c[f.key] }))
       ], c[f.key]);
     }
-    for (const t of TRI) {
-      const base = query.filter(rows, without(c, t.key));
-      const yes = query.filter(base, { hasVideo: null, hasDescription: null, [t.key]: true }).length;
-      const cur = { true: 'yes', false: 'no' }[String(c[t.key])] ?? '';
-      fillSelect(selects.get(t.key), [
-        { value: '', label: `Any (${fmt(base.length)})` },
-        { value: 'yes', label: `${t.yes} (${fmt(yes)})` },
-        { value: 'no', label: `${t.no} (${fmt(base.length - yes)})` }
+    for (const tri of TRI) {
+      const base = query.filter(rows, without(c, tri.key));
+      const yes = query.filter(base, { hasVideo: null, hasDescription: null, [tri.key]: true }).length;
+      const cur = { true: 'yes', false: 'no' }[String(c[tri.key])] ?? '';
+      fillSelect(selects.get(tri.key), [
+        { value: '', label: t('exl.option', { label: t('exl.any'), count: base.length }) },
+        { value: 'yes', label: t('exl.option', { label: t(tri.yes), count: yes }) },
+        { value: 'no', label: t('exl.option', { label: t(tri.no), count: base.length - yes }) }
       ], cur);
     }
     const baseU = query.filter(rows, without(c, 'usage'));
@@ -246,18 +250,18 @@ function renderTable(root, ctx, signal) {
 
   function renderChips() {
     const parts = [];
-    if (c.text.trim()) parts.push({ key: 'text', text: `Search: "${c.text.trim()}"` });
-    for (const f of FACETS) {
-      if (c[f.key]) parts.push({ key: f.key, text: `${f.label}: ${facetLabel(f, c[f.key])}`, title: c[f.key] });
+    if (c.text.trim()) parts.push({ key: 'text', text: t('exl.chipSearch', { text: c.text.trim() }) });
+    for (const f of facets) {
+      if (c[f.key]) parts.push({ key: f.key, text: t('exl.chip', { label: facetName(f), value: facetLabel(f, c[f.key]) }), title: c[f.key] });
     }
-    if (c.usage !== 'all') parts.push({ key: 'usage', text: c.usage === 'used' ? 'Used in a branch' : 'Not used in any branch' });
-    for (const t of TRI) {
-      if (c[t.key] !== null) parts.push({ key: t.key, text: c[t.key] ? t.yes : t.no });
+    if (c.usage !== 'all') parts.push({ key: 'usage', text: t(c.usage === 'used' ? 'exl.usageUsed' : 'exl.usageOrphanChip') });
+    for (const tri of TRI) {
+      if (c[tri.key] !== null) parts.push({ key: tri.key, text: t(c[tri.key] ? tri.yes : tri.no) });
     }
     chips.replaceChildren(...parts.map((p) => h('span', { class: 'chip chip--on', title: p.title ?? null },
       p.text,
       h('button', {
-        type: 'button', class: 'chip__remove', 'aria-label': `Remove filter ${p.text}`,
+        type: 'button', class: 'chip__remove', 'aria-label': t('exl.removeFilter', { text: p.text }),
         onclick: () => {
           c[p.key] = defaultCriteria()[p.key];
           if (p.key === 'text') search.value = '';
@@ -272,15 +276,15 @@ function renderTable(root, ctx, signal) {
 
   function apply(keepPage = false) {
     filtered = query.filter(rows, c);
-    resultLine.replaceChildren(h('strong', null, fmt(filtered.length)), ` of ${plural(rows.length, 'exercise')}`);
+    resultLine.replaceChildren(h('strong', null, fmt(filtered.length)), t('exl.resultOf', { total: t('count.exercise', { count: rows.length }) }));
     refreshFacets();
     renderChips();
     const none = filtered.length === 0;
     tableWrap.hidden = none;
     emptySlot.replaceChildren(...(none ? [emptyState({
-      title: 'No exercise matches',
-      body: 'No exercise fits the search and all filters together. Remove a filter or clear them all.',
-      action: h('button', { type: 'button', class: 'btn btn--primary', onclick: clearAll }, 'Clear filters')
+      title: t('exl.emptyTitle'),
+      body: t('exl.emptyBody'),
+      action: h('button', { type: 'button', class: 'btn btn--primary', onclick: clearAll }, t('exl.clearFilters'))
     })] : []));
     pager?.update(filtered, keepPage);
     if (!keepPage) state.page = 0;
@@ -289,22 +293,21 @@ function renderTable(root, ctx, signal) {
   root.append(
     h('div', { class: 'page-head exl-head' },
       h('div', { class: 'row row--between' },
-        h('h1', { class: 'page-title' }, term('Exercises', 'Übungen')),
-        h('button', { type: 'button', class: 'btn btn--primary', onclick: () => addExercise(ctx) }, '+ Add exercise')),
-      h('p', { class: 'page-lead' },
-        'Find an exercise by id or name, narrow the list with the filters, then open it to correct its data.')),
-    h('section', { class: 'card card--flat exl-filters', 'aria-label': 'Search and filters' },
+        h('h1', { class: 'page-title' }, t('exl.title')),
+        h('button', { type: 'button', class: 'btn btn--primary', onclick: () => addExercise(ctx) }, t('exl.add'))),
+      h('p', { class: 'page-lead' }, t('exl.lead'))),
+    h('section', { class: 'card card--flat exl-filters', 'aria-label': t('exl.filtersLabel') },
       search,
       facetBox,
       h('div', { class: 'row exl-usage-row' },
-        h('span', { class: 'field__label' }, term('Usage', 'Verwendung')),
+        h('span', { class: 'field__label' }, t('exl.usage')),
         usageBox)),
     h('div', { class: 'row exl-resultbar' }, resultLine, chips),
     tableWrap,
     emptySlot);
 
   apply(true);
-  pager = new Pager(tbody, filtered, renderRow, { pageSize: PAGE_SIZE, label: 'Exercise pages' });
+  pager = new Pager(tbody, filtered, renderRow, { pageSize: PAGE_SIZE, label: t('exl.pagesLabel') });
   pager.goTo(state.page);
 
   if (state.returning && state.lastId) {
@@ -358,7 +361,6 @@ function render(root, ctx, params, signal) {
 }
 
 registerView('exercises', {
-  label: 'Exercises',
   render,
   onDataChange: () => state.current?.update()
 });

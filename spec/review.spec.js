@@ -19,15 +19,12 @@ test('review: parseValue keeps the marks of a newer work file as they are', () =
   status.issues['orphan:exercise:13'] = { status: 'accepted', comment: '', date: '' };
   const r = review.parseValue(structuredClone(status));
   assert.equal(r.ok, true);
-  assert.deepEqual(r.warnings, []);
   assert.deepEqual(r.status.branches, status.branches);
   assert.deepEqual(r.status.issues, status.issues);
 });
 
 test('review: parseValue refuses a value that is not a review part', () => {
   for (const data of [null, [], { version: 2, branches: {}, issues: {} }, { version: 1, branches: {} }]) {
-    const r = review.parseValue(data);
-    assert.equal(r.ok, false);
-    assert.match(r.message, /not a review progress file/);
+    assert.deepEqual(review.parseValue(data), { ok: false });
   }
 });

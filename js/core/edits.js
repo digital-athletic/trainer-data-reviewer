@@ -1,5 +1,6 @@
 import * as M from './model.js';
-import { CELL_MESSAGE, parseCellInput, validateBranch, validateExercise } from './schema.js';
+import { msg } from './messages.js';
+import { PICKLISTS, parseCellInput, validateBranch, validateExercise } from './schema.js';
 
 /**
  * @typedef {import('./model.js').Dataset} Dataset
@@ -19,13 +20,14 @@ import { CELL_MESSAGE, parseCellInput, validateBranch, validateExercise } from '
  *   | { kind: 'otherSide', exerciseId: string }} Reference
  */
 
-const GENDERS = ['default', 'm', 'w', 'k'];
+const GENDERS = PICKLISTS.gender;
 const REPLAYABLE = new Set(['setField', 'setTags', 'setOtherSide', 'addExercise', 'deleteExercise', 'revertField']);
 const DIGITS = /^\d+$/;
 
-const fail = (path, message) => ({ ok: false, errors: [{ path: path ?? [], message }] });
+/** @param {string[] | null} path @param {import('./messages.js').Message} m */
+const fail = (path, m) => ({ ok: false, errors: [{ path: path ?? [], ...m }] });
 const exerciseTarget = (id) => ({ kind: 'exercise', id });
-const unsafePath = (keys) => fail(keys, `The field name "${keys.find(M.isUnsafeKey)}" is not allowed.`);
+const unsafePath = (keys) => fail(keys, msg('unsafeField', { name: keys.find(M.isUnsafeKey) }));
 const changeKey = (c) => `${c.recordKey}|${c.field}`;
 
 const fileOf = (target) => (target.kind === 'exercise' ? M.EXERCISES : `skillTrees/${target.tree}.json`);
@@ -77,6 +79,15 @@ function normalize(record, path, value) {
 
 const firstFailure = (results) => results.find((r) => !r.ok) ?? { ok: true };
 
+// The exercise ids a replayable command reads or writes.
+function exerciseIdsOf({ method, args }) {
+  const [first, second] = Array.isArray(args) ? args : [];
+  if (method === 'setOtherSide') return [first, second].filter((id) => id != null).map(String);
+  if (method === 'deleteExercise') return [String(first)];
+  if (method === 'addExercise') return first?.id != null ? [String(first.id)] : [];
+  return first?.kind === 'exercise' ? [String(first.id)] : [];
+}
+
 /** @param {Dataset} ds @param {string | number} exerciseId @returns {Reference[]} */
 export function referencesTo(ds, exerciseId) {
   const id = String(exerciseId);
@@ -89,7 +100,7 @@ export function referencesTo(ds, exerciseId) {
 }
 
 /** @param {Editor} editor @returns {string} */
-export function nextExerciseId(editor) {
+function nextExerciseId(editor) {
   let n = editor.highWater.exerciseId + 1;
   while (editor.ds.index.exerciseById.has(String(n)) || String(n) === M.PAUSE_ID) n++;
   return String(n);
@@ -97,7 +108,7 @@ export function nextExerciseId(editor) {
 
 /**
  * Applies validated edits to a dataset, keeps the journal for undo and the
- * command log for replay. Views never mutate the dataset directly.
+ * command log for replay. Views change the dataset through `Editor` methods only.
  */
 export class Editor {
   /** @type {Edit[]} */
@@ -110,8 +121,6 @@ export class Editor {
   #groupSeq = 0;
   /** @type {Map<string, unknown> | null} "recordKey|field" to the new value at the last export */
   #exported = null;
-  /** @type {Map<string, Exercise> | null} */
-  #origExercises = null;
 
   /** @param {Dataset} ds */
   constructor(ds) {
@@ -122,10 +131,7 @@ export class Editor {
 
   #originalRecord(target) {
     const { ds } = this;
-    if (target.kind === 'exercise') {
-      this.#origExercises ??= new Map(M.originalData(ds, M.EXERCISES).map((ex) => [ex.id, ex]));
-      return this.#origExercises.get(String(target.id));
-    }
+    if (target.kind === 'exercise') return M.originalExercise(ds, target.id);
     const data = M.originalData(ds, fileOf(target));
     return data && Object.hasOwn(data, target.branchId) ? data[target.branchId] : undefined;
   }
@@ -153,7 +159,6 @@ export class Editor {
       } else {
         ds.trees[e.target.tree][e.target.branchId] = e.oldValue;
       }
-      ds.index = M.buildIndex(ds);
       return;
     }
     const record = resolve(ds, e.target);
@@ -178,7 +183,7 @@ export class Editor {
     const ctx = {
       set: (target, path, value, { index: keyIndex, newTags } = {}) => {
         const record = resolve(ds, target);
-        if (!record) return fail(path, 'The record no longer exists.');
+        if (!record) return fail(path, msg('recordGone'));
         const plan = normalize(record, path, value);
         const trial = structuredClone(record);
         M.setAt(trial, plan.path, M.clone(plan.value));
@@ -196,7 +201,7 @@ export class Editor {
       },
       del: (target, path) => {
         const record = resolve(ds, target);
-        if (!record) return fail(path, 'The record no longer exists.');
+        if (!record) return fail(path, msg('recordGone'));
         if (!M.hasAt(record, path)) return { ok: true };
         const trial = structuredClone(record);
         M.deleteAt(trial, path);
@@ -218,7 +223,7 @@ export class Editor {
     const result = fn(ctx);
     if (!result || result.ok === false) {
       for (const e of pending.toReversed()) this.#revertEdit(e);
-      ds.index = M.buildIndex(ds);
+      if (pending.length) ds.index = M.buildIndex(ds);
       return result;
     }
     if (pending.length) {
@@ -235,27 +240,27 @@ export class Editor {
   setField(target, path, value) {
     const { ds } = this;
     const record = resolve(ds, target);
-    if (!record) return fail([], 'The record does not exist.');
-    if (!Array.isArray(path) || path.length === 0) return fail([], 'No field given.');
+    if (!record) return fail([], msg('recordMissing'));
+    if (!Array.isArray(path) || path.length === 0) return fail([], msg('noField'));
     let keys = path.map(String);
     if (keys.some(M.isUnsafeKey)) return unsafePath(keys);
     const [head] = keys;
-    if (head === 'tags') return fail(keys, 'Tags change through the tag editor.');
-    if (target.kind === 'exercise' && head === 'id') return fail(keys, 'The id of an exercise cannot be changed.');
-    if (target.kind === 'branch' && head === 'levels') return fail(keys, 'Branch levels change through the ladder.');
+    if (head === 'tags') return fail(keys, msg('tagsViaEditor'));
+    if (target.kind === 'exercise' && head === 'id') return fail(keys, msg('idFixed'));
+    if (target.kind === 'branch' && head === 'levels') return fail(keys, msg('levelsViaLadder'));
     if (target.kind === 'exercise' && head === 'name' && keys.length === 1 &&
         (typeof value !== 'string' || value.trim() === '')) {
-      return fail(keys, 'The name must not be empty.');
+      return fail(keys, msg('nameEmpty'));
     }
 
     let next = value;
     if (isCellPath(keys)) {
       if (typeof next === 'string') {
         const parsed = parseCellInput(next);
-        if (!parsed.ok) return fail(keys, parsed.message);
+        if (!parsed.ok) return fail(keys, msg('cellNumber'));
         next = parsed.value;
       } else if (typeof next !== 'number' || !Number.isFinite(next)) {
-        return fail(keys, CELL_MESSAGE);
+        return fail(keys, msg('cellNumber'));
       }
       if (next === '' && !M.hasAt(record, keys)) return { ok: true };
     }
@@ -283,16 +288,16 @@ export class Editor {
   setTags(target, tags, opts) {
     const { ds } = this;
     const record = resolve(ds, target);
-    if (!record) return fail([], 'The record does not exist.');
-    if (!Array.isArray(tags)) return fail(['tags'], 'Tags must be a list.');
-    if (tags.some((t) => typeof t !== 'string')) return fail(['tags'], 'Every tag must be text.');
+    if (!record) return fail([], msg('recordMissing'));
+    if (!Array.isArray(tags)) return fail(['tags'], msg('tagsList'));
+    if (tags.some((t) => typeof t !== 'string')) return fail(['tags'], msg('tagText'));
     const clean = [...new Set(tags.map((t) => t.trim()).filter(Boolean))];
-    if (clean.includes(M.PAUSE_TAG)) return fail(['tags'], `The tag ${M.PAUSE_TAG} belongs to the Pause exercise only.`);
+    if (clean.includes(M.PAUSE_TAG)) return fail(['tags'], msg('pauseTag', { tag: M.PAUSE_TAG }));
     const confirmed = opts?.confirmedNewTags ?? [];
     const counts = ds.index.tagCounts;
     const fresh = clean.filter((t) => !counts.exercise.has(t) && !counts.branch.has(t));
     const unconfirmed = fresh.filter((t) => !confirmed.includes(t));
-    if (unconfirmed.length) return fail(['tags'], `New tag ${unconfirmed.join(', ')} is not in the vocabulary yet. Please confirm it.`);
+    if (unconfirmed.length) return fail(['tags'], msg('newTagUnconfirmed', { tags: unconfirmed.join(', ') }));
     if (M.deepEqual(record.tags, clean)) return { ok: true };
     return this.#transact('setTags', [target, clean, { confirmedNewTags: fresh }], (ctx) =>
       ctx.set(target, ['tags'], clean, { newTags: fresh.length ? fresh : undefined }));
@@ -303,16 +308,16 @@ export class Editor {
     const { ds } = this;
     const selfId = String(id);
     const ex = ds.index.exerciseById.get(selfId);
-    if (!ex) return fail([], `Exercise ${selfId} does not exist.`);
+    if (!ex) return fail([], msg('exerciseMissing', { id: selfId }));
     const partnerId = otherId == null ? null : String(otherId);
     const both = Boolean(opts?.linkBack);
-    if (partnerId === selfId) return fail(['otherSideExerciseId'], 'An exercise cannot be its own other side.');
-    if (partnerId !== null && !ds.index.exerciseById.has(partnerId)) return fail(['otherSideExerciseId'], `Exercise ${partnerId} does not exist.`);
+    if (partnerId === selfId) return fail(['otherSideExerciseId'], msg('ownOtherSide'));
+    if (partnerId !== null && !ds.index.exerciseById.has(partnerId)) return fail(['otherSideExerciseId'], msg('exerciseMissing', { id: partnerId }));
     const field = ['otherSideExerciseId'];
     return this.#transact('setOtherSide', [selfId, partnerId, { linkBack: both }], (ctx) => {
       const results = [];
       const oldPartner = ex.otherSideExerciseId == null ? null : String(ex.otherSideExerciseId);
-      if (ex.otherSideExerciseId !== partnerId) results.push(ctx.set(exerciseTarget(selfId), field, partnerId));
+      if ((ex.otherSideExerciseId ?? null) !== partnerId) results.push(ctx.set(exerciseTarget(selfId), field, partnerId));
       if (both) {
         const p = oldPartner && oldPartner !== partnerId ? ds.index.exerciseById.get(oldPartner) : null;
         if (p && p.otherSideExerciseId === selfId) results.push(ctx.set(exerciseTarget(p.id), field, null));
@@ -333,7 +338,7 @@ export class Editor {
   addExercise(opts) {
     const { ds } = this;
     const id = opts?.id != null ? String(opts.id) : nextExerciseId(this);
-    if (!DIGITS.test(id) || ds.index.exerciseById.has(id)) return fail(['id'], `Exercise id ${id} is already taken.`);
+    if (!DIGITS.test(id) || ds.index.exerciseById.has(id)) return fail(['id'], msg('idTaken', { id }));
     const defaults = {
       id, name: 'New exercise', displayName: null,
       level: { m: 1, w: 1 }, tags: [],
@@ -356,15 +361,15 @@ export class Editor {
     return result;
   }
 
-  /** @returns {Result | { ok: false, reason: string, references: Reference[] }} */
+  /** @returns {Result | { ok: false, reason: import('./messages.js').Message, references: Reference[] }} */
   deleteExercise(id) {
     const { ds } = this;
     const exId = String(id);
-    if (exId === M.PAUSE_ID) return { ok: false, reason: 'Pause is a system exercise and cannot be deleted.', references: [] };
+    if (exId === M.PAUSE_ID) return { ok: false, reason: msg('pauseNoDelete'), references: [] };
     const ex = ds.index.exerciseById.get(exId);
-    if (!ex) return fail([], `Exercise ${exId} does not exist.`);
+    if (!ex) return fail([], msg('exerciseMissing', { id: exId }));
     const references = referencesTo(ds, exId);
-    if (references.length) return { ok: false, reason: 'This exercise is still in use. Remove these references first.', references };
+    if (references.length) return { ok: false, reason: msg('inUse'), references };
     return this.#transact('deleteExercise', [exId], (ctx) => {
       const pos = ds.exercises.indexOf(ex);
       ds.exercises.splice(pos, 1);
@@ -389,13 +394,13 @@ export class Editor {
 
   /** Restores the loaded value of one field. @param {Target} target @param {(string | number)[]} path @returns {Result} */
   revertField(target, path) {
-    if (!Array.isArray(path) || path.length === 0) return fail([], 'No field given.');
+    if (!Array.isArray(path) || path.length === 0) return fail([], msg('noField'));
     const keys = path.map(String);
     if (keys.some(M.isUnsafeKey)) return unsafePath(keys);
     const orig = this.#originalRecord(target);
-    if (!orig) return fail(keys, 'This record is new, so there is no loaded value to go back to.');
+    if (!orig) return fail(keys, msg('noLoadedValue'));
     const record = resolve(this.ds, target);
-    if (!record) return fail(keys, 'The record does not exist.');
+    if (!record) return fail(keys, msg('recordMissing'));
     const origHas = M.hasAt(orig, keys);
     const curHas = M.hasAt(record, keys);
     if (origHas && curHas && M.deepEqual(M.getAt(orig, keys), M.getAt(record, keys))) return { ok: true };
@@ -412,6 +417,11 @@ export class Editor {
     return [...this.#journal];
   }
 
+  /** The number of journal entries, without a copy of the journal. @returns {number} */
+  get journalLength() {
+    return this.#journal.length;
+  }
+
   /** @returns {Command[]} */
   commands() {
     return this.#commandLog.map(({ method, args }) => ({ method, args: M.clone(args) }));
@@ -421,19 +431,30 @@ export class Editor {
   replay(commands) {
     let applied = 0;
     const failed = [];
+    // Ids of replayed addExercise calls that failed. Later commands on them would change another exercise.
+    const notAdded = new Set();
     for (const command of commands ?? []) {
       let r;
-      if (!command || !REPLAYABLE.has(command.method)) {
-        r = fail([], `Unknown change "${command?.method}".`);
+      const known = Boolean(command) && REPLAYABLE.has(command.method);
+      const ids = known ? exerciseIdsOf(command) : [];
+      const skipId = ids.find((id) => notAdded.has(id));
+      if (!known) {
+        r = fail([], msg('unknownCommand', { method: String(command?.method) }));
+      } else if (skipId !== undefined) {
+        r = fail([], msg('notAdded', { id: skipId }));
       } else {
         try {
           r = this[command.method](...M.clone(command.args ?? []));
         } catch (e) {
-          r = fail([], e.message);
+          r = fail([], e.code ? msg(e.code, e.params) : msg('text', { text: e.message }));
         }
       }
-      if (r && r.ok !== false) applied++;
-      else failed.push({ command, errors: r.errors ?? [{ path: [], message: r.reason }] });
+      if (r && r.ok !== false) {
+        applied++;
+        continue;
+      }
+      if (command?.method === 'addExercise' && ids.length) notAdded.add(ids[0]);
+      failed.push({ command, errors: r.errors ?? [{ path: [], ...r.reason }] });
     }
     return { applied, failed };
   }
@@ -466,12 +487,12 @@ export class Editor {
     return out;
   }
 
-  /** @returns {number} */
-  changeCount() {
-    return this.netChanges().length;
+  /** @param {Change[]} [changes] the current netChanges(), to skip computing them again @returns {number} */
+  changeCount(changes = this.netChanges()) {
+    return changes.length;
   }
 
-  /** Remembers the net changes the trainer just downloaded. */
+  /** Stores the new value of every net change at export time. */
   markExported() {
     this.#exported = new Map(this.netChanges().map((c) => [changeKey(c), M.clone(c.newValue)]));
   }
@@ -505,6 +526,3 @@ export class Editor {
     };
   }
 }
-
-/** @param {Dataset} ds @returns {Editor} */
-export const create = (ds) => new Editor(ds);

@@ -52,6 +52,12 @@ test('static: core files are ES modules with named exports and only relative imp
   }
 });
 
+test('static: every UI module loads and its named imports resolve', async () => {
+  for (const f of jsFiles(join(APP, 'js', 'ui')).filter((f) => !f.endsWith('main.js'))) {
+    await import(f);
+  }
+});
+
 test('static: only config.js knows the target repository paths', () => {
   for (const f of jsFiles(CORE)) {
     if (f.endsWith('config.js')) continue;

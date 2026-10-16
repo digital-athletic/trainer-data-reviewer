@@ -1,10 +1,10 @@
-// Serves the app folder for local development: node dev/serve.js [port]
+// Serves the app folder for local development: node dev/serve.js [port] [host]
 import { createServer } from 'node:http';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { extname, join, normalize, sep } from 'node:path';
 
 const ROOT = await realpath(join(import.meta.dirname, '..'));
-const HOST = '127.0.0.1';
+const HOST = process.argv[3] ?? process.env.HOST ?? '127.0.0.1';
 const PORT = Number(process.argv[2] ?? process.env.PORT ?? 8080);
 
 const MIME = new Map([

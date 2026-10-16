@@ -1,29 +1,31 @@
-// App shell: welcome screen, session, work file, export, undo, header and router.
+// App shell: welcome screen, session, undo, header, language switch and router.
 import { DATA_TARGET_PATH } from '../core/config.js';
 import * as model from '../core/model.js';
 import * as edits from '../core/edits.js';
 import * as review from '../core/review.js';
-import * as changelog from '../core/changelog.js';
 import * as loader from '../core/loader.js';
-import * as workfile from '../core/workfile.js';
 import { AutoSave } from './autosave.js';
-import {
-  confirmDialog, copyText, download, emptyState, h, isoDate, isTyping, messageDialog, notice, openDialog,
-  plural, sleep, toast
-} from './dom.js';
+import { confirmDialog, copyText, h, isTyping, messageDialog, notice, toast } from './dom.js';
+import { openExport } from './export-dialog.js';
+import { applyStatic, coreText, lang, LANGS, locale, onLangChange, setLang, t } from './i18n.js';
 import { getView } from './registry.js';
+import { parseRoute } from './routes.js';
+import * as workFile from './work-file.js';
 
-const APP_NAME = 'Coach data reviewer';
 const TABS = [
-  { name: 'exercises', label: 'Exercises', hash: '#/exercises' }
+  { name: 'exercises', label: 'tabs.exercises', hash: '#/exercises' }
 ];
-const EXPECTED = `The app expects the folder ${DATA_TARGET_PATH}, which holds Exercises.json and a skillTrees folder.`;
+const EXERCISES_PATH = model.REPO_BASE + model.EXERCISES;
+/** The closing line of every load error. */
+const EXPECTED = { key: 'app.expected', params: { path: DATA_TARGET_PATH } };
 
 /**
- * App state. The browser specs read it through a dynamic import of this module.
- * workUnsaved is true when the work changed since the trainer last saved or opened a work file.
+ * @typedef {{ key: string, params?: Record<string, unknown> } | import('../core/messages.js').Message | Error | string} Line
+ *   A line of an error notice: a dictionary key, a core message, or an error from the browser.
  */
-export const state = {
+
+/** App state. workUnsaved is true when the work changed since the trainer last saved or opened a work file. */
+const state = {
   ctx: null,
   fingerprint: null,
   workUnsaved: false,
@@ -33,71 +35,101 @@ export const state = {
   current: null,
   lastHash: new Map(),
   notifyPending: false,
-  replaying: false,
   unsubscribe: null,
   /** @type {AutoSave | null} */
   autosave: null,
   loading: false,
+  /** @type {{ title: string, lines: Line[] } | null} title is a dictionary key */
   welcomeError: null
 };
 const els = {};
 let routeAbort = null;
 
+/** @type {import('./work-file.js').Shell} */
+const shell = { state, startSession, renderHeader, route, closeMenu, renderWelcome };
+
 const byId = (id) => document.getElementById(id);
 const p = (text) => h('p', null, text);
-const errorText = (err) => err?.message ?? String(err);
-const rawOf = (ds) => Object.fromEntries(Object.entries(ds.files).map(([path, f]) => [path, f.raw]));
+/** @param {Line} line @returns {string} */
+const lineText = (line) => (typeof line === 'object' && line !== null && 'key' in line ? t(line.key, line.params) : coreText(line));
+const lineBlock = (lines) => h('div', { class: 'stack stack--tight' }, lines.map((line) => p(lineText(line))));
+
+/* ---------- Language ---------- */
+
+/** The DE / EN buttons. The pressed button names the current language. */
+function langSwitch() {
+  return h('div', { class: 'lang-switch', role: 'group', 'aria-label': t('lang.label') },
+    LANGS.map((code) => h('button', {
+      type: 'button', class: 'btn btn--small btn--ghost', lang: code, 'data-lang': code,
+      title: t(`lang.${code}Name`), 'aria-pressed': String(code === lang()),
+      onclick: () => setLang(code)
+    }, t(`lang.${code}`))));
+}
+
+// Renders every visible text again in the new language and keeps focus on the pressed button.
+function onLangSwitch() {
+  const focused = document.activeElement instanceof HTMLElement ? document.activeElement.dataset.lang : undefined;
+  const inHeader = focused !== undefined && els.langSlot.contains(document.activeElement);
+  applyStatic();
+  els.langSlot.replaceChildren(langSwitch());
+  if (state.ctx) {
+    renderTabs();
+    renderHeader();
+    rerenderView();
+  } else {
+    renderWelcome();
+  }
+  if (focused === undefined) return;
+  const host = inHeader ? els.langSlot : els.viewRoot;
+  /** @type {HTMLElement | null} */ (host.querySelector(`[data-lang="${focused}"]`))?.focus();
+}
 
 /* ---------- Welcome and loading ---------- */
 
 function renderWelcome() {
   const copyBtn = h('button', {
     type: 'button', class: 'btn btn--small',
-    onclick: async () => toast(await copyText(DATA_TARGET_PATH) ? 'Folder path copied' : 'Select the path and copy it with Ctrl+C')
-  }, 'Copy');
+    onclick: async () => toast(t(await copyText(EXERCISES_PATH) ? 'welcome.copied' : 'welcome.copyFailed'))
+  }, t('welcome.copy'));
 
   const chooseArea = state.loading
-    ? h('p', { class: 'loading', role: 'status' }, 'Reading the files. This takes a few seconds.')
-    : h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn btn--primary btn--large', onclick: pickFolder }, 'Choose data folder'));
+    ? h('p', { class: 'loading', role: 'status' }, t('welcome.reading'))
+    : h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn btn--primary btn--large', onclick: pickExercisesFile }, t('welcome.choose')));
 
   const pending = state.pendingWork;
   const workArea = pending
-    ? notice('success', `Ready: ${pending.name}`, 'The app adds this work as soon as the data folder is loaded.')
-    : h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn', onclick: pickWorkFile }, 'Open work file'));
+    ? notice('success', t('welcome.ready', { name: pending.name }), t('welcome.readyBody'))
+    : h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn', onclick: pickWorkFile }, t('header.workOpen')));
 
+  const error = state.welcomeError;
   els.viewRoot.replaceChildren(h('div', { class: 'welcome' },
+    h('div', { class: 'welcome__lang' }, langSwitch()),
     h('div', { class: 'stack' },
-      h('h1', { class: 'welcome__title' }, 'Review the exercise catalog and the skill trees'),
-      h('p', { class: 'welcome__lead' },
-        'This app lets you correct the exercises of the training data and gives you the changed files to send back. The app runs in this browser window. Your files stay on this computer.')),
-    state.welcomeError,
+      h('h1', { class: 'welcome__title' }, t('welcome.title')),
+      h('p', { class: 'welcome__lead' }, t('welcome.lead'))),
+    error ? notice('error', t(error.title), lineBlock(error.lines)) : null,
     h('ol', { class: 'steps' },
       h('li', { class: 'step step--main' }, h('div', { class: 'step__body' },
-        h('h2', { class: 'step__title' }, 'Choose the data folder'),
-        p('The app does not contain the training data. Choose the data folder on your computer. In the project download it is this folder:'),
-        h('div', { class: 'copy-box' }, h('code', null, DATA_TARGET_PATH), copyBtn),
-        chooseArea,
-        h('p', { class: 'small muted' },
-          'The browser may ask whether to upload all files in the folder (about 110). Confirm it: nothing leaves your computer. The app only reads the files inside this browser window.'))),
+        h('h2', { class: 'step__title' }, t('welcome.choose')),
+        p(t('welcome.step1Body')),
+        h('div', { class: 'copy-box' }, h('code', null, EXERCISES_PATH), copyBtn),
+        p(t('welcome.step1Rename')),
+        chooseArea)),
       h('li', { class: ['step', pending ? 'step--done' : ''] }, h('div', { class: 'step__body' },
-        h('h2', { class: 'step__title' }, 'Optional: open your work file'),
-        p('Did you work on the data before? Open the work file you saved last time (coach-review-work-DATE.json). Pick the newest one.'),
+        h('h2', { class: 'step__title' }, t('welcome.step2Title')),
+        p(t('welcome.step2Body')),
         workArea)),
       h('li', { class: 'step' }, h('div', { class: 'step__body' },
-        h('h2', { class: 'step__title' }, 'Start with the Exercises list'),
-        p('The app opens the Exercises list first. Find an exercise, correct it, then click "Export changes" at the top right. Save the work file from the "Work file" menu before you stop.')))),
+        h('h2', { class: 'step__title' }, t('welcome.step3Title')),
+        p(t('welcome.step3Body', { export: t('header.export'), work: t('header.workFile') }))))),
     h('p', { class: 'small muted' },
-      'Shortcuts: ', h('kbd', null, '/'), ' jumps to the search box, ',
-      h('kbd', null, 'Ctrl'), ' + ', h('kbd', null, 'Z'), ' undoes the last change.')));
+      t('welcome.shortcuts'), h('kbd', null, '/'), t('welcome.shortcutSearch'),
+      h('kbd', null, t('keys.ctrl')), ' + ', h('kbd', null, 'Z'), t('welcome.shortcutUndo'))));
 }
 
-function setWelcomeError(title, lines) {
-  state.welcomeError = notice('error', title, h('div', { class: 'stack stack--tight' }, lines.map(p)));
-}
-
-function pickFolder() {
-  els.folderInput.value = '';
-  els.folderInput.click();
+function pickExercisesFile() {
+  els.exercisesInput.value = '';
+  els.exercisesInput.click();
 }
 
 function pickWorkFile() {
@@ -105,75 +137,67 @@ function pickWorkFile() {
   els.workInput.click();
 }
 
-function foundSummary(entries) {
-  const names = new Set(entries.map((e) => {
-    const parts = String(e.relativePath).split('/');
-    return parts.length > 1 ? parts[1] : parts[0];
-  }).filter(Boolean));
-  const root = entries.length ? String(entries[0].relativePath).split('/')[0] : '';
-  const list = [...names].slice(0, 6);
-  return `You chose "${root}" with ${plural(entries.length, 'file')}${list.length ? `, for example: ${list.join(', ')}.` : '.'}`;
-}
-
+/** @param {string} title dictionary key @param {Line[]} lines */
 function loadFailed(title, lines) {
   state.loading = false;
   if (state.ctx) {
-    messageDialog({ title, body: h('div', { class: 'stack stack--tight' }, lines.map(p)) });
+    messageDialog({ title: t(title), body: lineBlock(lines) });
     return;
   }
-  setWelcomeError(title, lines);
+  state.welcomeError = { title, lines };
   renderWelcome();
 }
 
-async function onFolderChosen() {
-  const { files } = els.folderInput;
+async function onExercisesChosen() {
+  const { files } = els.exercisesInput;
   if (!files?.length) return;
   const entries = Array.from(files, (f) => ({ relativePath: f.webkitRelativePath || f.name }));
   const pick = loader.pickDataFiles(entries);
-  if (pick.error || !pick.exercises || !pick.trees.length) {
-    loadFailed('This is not the data folder', [pick.error ?? EXPECTED, foundSummary(entries)]);
+  if (pick.error) {
+    loadFailed('load.notExercises', [pick.error, { key: 'load.youChose', params: { name: files[0].name } }]);
     return;
   }
 
   state.loading = true;
   state.welcomeError = null;
-  if (state.ctx) toast('Reading the files');
+  if (state.ctx) toast(t('load.reading'));
   else renderWelcome();
   let res;
   try {
     res = await loader.readFileList(files);
   } catch (err) {
-    loadFailed('The files could not be read', [errorText(err), EXPECTED]);
+    loadFailed('load.readFailed', [err, EXPECTED]);
     return;
   }
   if (res.errors.length) {
-    loadFailed('Some files could not be read', [...res.errors, EXPECTED]);
+    loadFailed('load.readFailed', [...res.errors, EXPECTED]);
     return;
   }
   let ds;
   try {
     ds = model.load(res.raw);
-    startSession(ds);
+    startSession(new edits.Editor(ds));
   } catch (err) {
-    loadFailed('The data could not be loaded', [errorText(err)]);
+    loadFailed('load.loadFailed', [err, EXPECTED]);
     return;
   }
   state.loading = false;
-  toast(`Loaded ${datasetLine(model.stats(ds))}`);
+  toast(t('load.loaded', { dataset: datasetLine(model.stats(ds)) }));
   const start = parseRoute(state.initialHash) ? state.initialHash : '#/exercises';
   state.initialHash = '';
   navigate(start);
 
-  await offerRestore();
+  await workFile.offerRestore(shell);
   const work = state.pendingWork;
   state.pendingWork = null;
-  if (work) await openWork(work);
+  if (work) await workFile.openWork(shell, work);
 }
 
 /* ---------- Session ---------- */
 
-function startSession(ds) {
-  const editor = edits.create(ds);
+/** Starts a session on the editor. The editor may carry replayed commands. @param {edits.Editor} editor */
+function startSession(editor) {
+  const { ds } = editor;
   /** @type {import('./registry.js').Ctx} */
   const ctx = {
     ds,
@@ -190,8 +214,8 @@ function startSession(ds) {
   state.lastHash = new Map();
   state.current = null;
   state.unsubscribe = editor.subscribe(onEdits);
-  state.autosave = new AutoSave(state.fingerprint, buildBackup, {
-    onFail: () => toast('This browser does not keep a backup of your work. Export changes and save the work file often.', { tone: 'error', ms: 7000 })
+  state.autosave = new AutoSave(state.fingerprint, () => workFile.buildBackup(state), {
+    onFail: () => toast(t('load.backupFailed'), { tone: 'error', ms: 7000 })
   });
 
   els.header.hidden = false;
@@ -199,281 +223,49 @@ function startSession(ds) {
   renderHeader();
 }
 
-const datasetLine = ({ exercises, branches, trees }) =>
-  `${plural(exercises, 'exercise')} · ${plural(branches, 'branch', 'branches')} · ${plural(trees, 'skill tree')}`;
+// The branch and skill tree counts show only for a dataset with skill trees.
+const datasetLine = ({ exercises, branches, trees }) => [
+  t('count.exercise', { count: exercises }),
+  ...(trees ? [t('count.branch', { count: branches }), t('count.tree', { count: trees })] : [])
+].join(' · ');
 
-function workChanged() {
-  if (state.replaying) return;
+// A replayed editor starts its session after the replay, so replay fires no onEdits call.
+function onEdits() {
   state.workUnsaved = true;
   state.autosave?.schedule();
-}
-
-function onEdits() {
-  workChanged();
   renderHeader();
   scheduleViewNotify();
 }
 
-/* ---------- Work file ---------- */
+/* ---------- Work file and export ---------- */
 
-const currentWorkText = () => workfile.serialize({
-  commands: state.ctx.editor.commands(),
-  review: state.ctx.review,
-  fingerprint: state.fingerprint
-});
+const saveWork = () => workFile.saveWork(shell);
 
-function buildBackup() {
-  const { ctx } = state;
-  if (!ctx) return null;
-  const commands = ctx.editor.commands();
-  if (!commands.length) return null;
-  return { unsaved: state.workUnsaved, text: currentWorkText() };
-}
-
-// The command list keeps every applied step, so an edit and the edit that reverts it
-// count twice. A dry run on a fresh copy gives the net change count the header badge shows.
-function countChanges(commands) {
-  try {
-    const probe = edits.create(model.load(rawOf(state.ctx.ds)));
-    probe.replay(commands);
-    return probe.changeCount();
-  } catch {
-    return commands.length;
-  }
-}
-
-async function offerRestore() {
-  const saved = state.autosave.read();
-  if (!saved) return;
-  const { work, unsaved } = saved;
-  const n = work.commands.length ? countChanges(work.commands) : 0;
-  if (!n) {
-    state.autosave.forget();
-    return;
-  }
-  const when = work.savedAt ? new Date(work.savedAt).toLocaleString() : 'earlier';
-  const ok = await openDialog({
-    title: 'Restore your work?',
-    body: [
-      p(`Last time (${when}) you worked on these same files. This browser kept ${plural(n, 'change')}.`),
-      p(unsaved ? 'You had not saved this work as a work file yet.' : 'You also saved this work as a work file.'),
-      p('Restore it to continue where you stopped. "Start fresh" deletes this backup.')
-    ],
-    actions: [
-      { label: 'Start fresh', value: false, ghost: true },
-      { spacer: true },
-      { label: `Restore ${plural(n, 'change')}`, value: true, primary: true, autofocus: true }
-    ]
-  }).result;
-  if (ok === false) state.autosave.forget();
-  if (ok === true) applyWork(work, { unsaved, done: `${plural(n, 'change')} restored` });
-}
-
-/** Keeps the review part of the work as it is, then replays the changes on the current session. */
-function applyWork(work, { unsaved, done, warnings = [] }) {
-  const { ctx } = state;
-  ctx.review = structuredClone(work.review);
-  state.replaying = true;
-  let result = { applied: 0, failed: [] };
-  try {
-    if (work.commands.length) result = ctx.editor.replay(work.commands);
-  } finally {
-    state.replaying = false;
-  }
-  state.workUnsaved = unsaved;
-  state.autosave.flush();
-  renderHeader();
-  rerenderView();
-  const notes = [
-    ...warnings.map((w) => h('li', null, w)),
-    ...result.failed.map((f) => h('li', null, h('span', { class: 'mono small' }, f.command.method), ' ',
-      (f.errors ?? []).map((e) => e.message).join(' ')))
-  ];
-  if (!notes.length) {
-    toast(done);
-    return;
-  }
-  messageDialog({
-    title: result.failed.length ? 'Some changes could not be applied' : 'Work loaded, with notes',
-    wide: true,
-    body: [
-      p(result.failed.length
-        ? `${plural(result.applied, 'change')} applied. These ${plural(result.failed.length, 'change')} did not fit the data any more, or the app noted a problem:`
-        : 'Please note:'),
-      h('ul', null, notes)
-    ]
-  });
-}
-
-function saveWork() {
+function startExport() {
   closeMenu();
-  const name = workfile.fileName();
-  download(name, currentWorkText(), 'application/json');
-  state.workUnsaved = false;
-  state.workSavedAt = new Date();
-  state.autosave.flush();
-  renderHeader();
-  toast(`Work saved as ${name} in your downloads folder`);
-}
-
-function workFileFailed(message) {
-  messageDialog({
-    title: 'This file is not a work file',
-    body: [p(message), p('Pick a file named coach-review-work-DATE.json that this app saved.')]
-  });
-}
-
-async function onWorkChosen() {
-  const file = els.workInput.files?.[0];
-  if (!file) return;
-  if (file.size > workfile.MAX_FILE_BYTES) {
-    workFileFailed('This file is larger than 5 MB. A work file of this app is much smaller.');
-    return;
-  }
-  let text;
-  try {
-    text = await file.text();
-  } catch {
-    workFileFailed('The file could not be read.');
-    return;
-  }
-  const parsed = workfile.parse(text);
-  if (!parsed.ok) {
-    workFileFailed(parsed.message);
-    return;
-  }
-  const pending = { name: file.name, work: parsed.value, warnings: parsed.warnings };
-  if (!state.ctx) {
-    state.pendingWork = pending;
-    renderWelcome();
-    return;
-  }
-  await openWork(pending);
-}
-
-/** Replaces the current work with an opened work file. */
-async function openWork({ name, work, warnings }) {
-  const { ctx } = state;
-  closeMenu();
-  const changes = ctx.editor.changeCount();
-  if (changes) {
-    const ok = await confirmDialog({
-      title: 'Replace your current work?',
-      body: `You have ${plural(changes, 'change')} in this session${state.workUnsaved ? ' that are not saved as a work file' : ''}. Opening ${name} replaces them.`,
-      confirmLabel: 'Open and replace',
-      danger: true
-    });
-    if (!ok) return;
-  }
-  if (work.fingerprint && work.fingerprint !== state.fingerprint) {
-    const ok = await confirmDialog({
-      title: 'This work file belongs to other data files',
-      body: h('div', { class: 'stack stack--tight' },
-        p(`${name} was saved for data files that differ from the folder you chose. This happens when the data changed after you saved the work file.`),
-        p('The app can still try. It lists the changes that do not fit the data any more.')),
-      confirmLabel: 'Open anyway'
-    });
-    if (!ok) return;
-  }
-
-  // A fresh session from the loaded files, so the work file replays on unchanged data.
-  startSession(model.load(rawOf(ctx.ds)));
-  route(true);
-  applyWork(work, { unsaved: false, done: `Work opened from ${name}`, warnings });
-}
-
-/* ---------- Export ---------- */
-
-function openExport() {
-  const { ctx } = state;
-  closeMenu();
-  const files = model.changedFiles(ctx.ds);
-  if (!files.length) {
-    messageDialog({
-      title: 'No changes to export',
-      body: [
-        p('You have not changed any data since you loaded the folder, so there is nothing to download.'),
-        state.workUnsaved ? p('Your work is not saved as a file yet. Use "Work file" and then "Save work file".') : null
-      ]
-    });
-    return;
-  }
-
-  const done = new Set();
-  // Marks the export once, when the last missing file of this dialog is downloaded.
-  let complete = false;
-  const downloadOne = (f, li) => {
-    download(f.fileName, f.text, 'application/json');
-    li.classList.add('is-done');
-    done.add(f.path);
-    if (complete || done.size < files.length) return;
-    complete = true;
-    ctx.editor.markExported();
-    state.autosave.schedule();
-    renderHeader();
-  };
-  const rows = files.map((f) => {
-    const li = h('li', null,
-      h('div', { class: 'file-list__names' },
-        h('strong', null, 'Save as ', h('code', null, f.fileName)),
-        h('span', { class: 'file-list__path' }, 'Goes to ', h('code', null, f.repoPath))),
-      h('button', { type: 'button', class: 'btn btn--small', onclick: () => downloadOne(f, li) }, 'Download'));
-    return li;
-  });
-
-  const allBtn = h('button', {
-    type: 'button', class: 'btn btn--primary',
-    onclick: async () => {
-      allBtn.disabled = true;
-      for (const [i, f] of files.entries()) {
-        allBtn.textContent = `Downloading ${i + 1} of ${files.length}`;
-        downloadOne(f, rows[i]);
-        await sleep(300);
-      }
-      allBtn.disabled = false;
-      allBtn.textContent = 'Download all again';
-      toast('All files downloaded');
+  openExport(state.ctx, {
+    workUnsaved: state.workUnsaved,
+    saveWork,
+    onExported: () => {
+      state.autosave.schedule();
+      renderHeader();
     }
-  }, files.length === 1 ? 'Download the file' : `Download all ${plural(files.length, 'file')}`);
-
-  const logBtn = h('button', {
-    type: 'button', class: 'btn',
-    onclick: () => download('changelog.md', changelog.build(ctx.editor, ctx.ds, { date: isoDate() }), 'text/markdown')
-  }, 'Download changelog.md');
-
-  const notes = changelog.pinnedTestNotes(ctx.editor, ctx.ds);
-  openDialog({
-    title: 'Export changes',
-    wide: true,
-    body: [
-      p(`${plural(ctx.editor.changeCount(), 'change')} in ${plural(files.length, 'file')}. Each export contains all your changes since you loaded the folder.`),
-      h('ul', { class: 'file-list' }, rows),
-      h('div', { class: 'row' }, allBtn, logBtn,
-        state.workUnsaved ? h('button', { type: 'button', class: 'btn', onclick: saveWork }, 'Save work file') : null),
-      h('p', { class: 'small muted' },
-        'Chrome may ask whether this page may download several files. Click "Allow". Send changelog.md together with the files: it lists every change for the developer.'),
-      notes?.length ? notice('warning', 'Notes for the developer (also in changelog.md)', h('ul', null, notes.map((n) => h('li', null, n)))) : null,
-      notice('info', 'What next', h('ol', null,
-        h('li', null, 'Replace the files in your data folder with the downloaded ones, or get the data folder again after the developer merges your changes.'),
-        h('li', null, 'If the browser saved a file as ', h('code', null, 'Exercises (1).json'), ', rename it to ', h('code', null, 'Exercises.json'), ' before uploading on GitHub.'),
-        h('li', null, 'Send the files and changelog.md to the developer, or upload them on GitHub ("Add file", then "Upload files") into the folder shown under each file.'),
-        h('li', null, 'Save the work file. Next time, open the newest work file to continue your work.')))
-    ],
-    actions: [{ label: 'Close', value: true, autofocus: true }]
   });
 }
 
 /* ---------- Undo ---------- */
 
-function describeEdit({ target: t = {}, op }) {
-  let record = `branch ${t.tree}/${t.branchId}`;
-  if (t.kind === 'exercise') {
-    const ex = state.ctx.ds.index.exerciseById.get(String(t.id));
-    record = `exercise ${t.id}${ex ? ` (${model.exerciseLabel(ex)})` : ''}`;
+function describeEdit({ target: tg = {}, op }) {
+  let record = t('undo.branch', { tree: tg.tree, id: tg.branchId });
+  if (tg.kind === 'exercise') {
+    const ex = state.ctx.ds.index.exerciseById.get(String(tg.id));
+    record = ex
+      ? t('undo.exerciseNamed', { id: String(tg.id), name: model.exerciseLabel(ex) })
+      : t('undo.exercise', { id: String(tg.id) });
   }
-  if (op === 'addRecord') return `adding ${record}`;
-  if (op === 'removeRecord') return `deleting ${record}`;
-  return `change on ${record}`;
+  if (op === 'addRecord') return t('undo.adding', { record });
+  if (op === 'removeRecord') return t('undo.deleting', { record });
+  return t('undo.change', { record });
 }
 
 function doUndo() {
@@ -481,16 +273,20 @@ function doUndo() {
   if (!ctx) return;
   const undone = ctx.editor.undo();
   if (!undone?.length) {
-    toast('Nothing to undo');
+    toast(t('undo.nothing'));
     return;
   }
-  toast(`Undone: ${describeEdit(undone[0])}${undone.length > 1 ? ` and ${plural(undone.length - 1, 'linked change')}` : ''}`);
+  const what = describeEdit(undone[0]);
+  toast(undone.length > 1
+    ? t('undo.doneLinked', { what, linked: t('count.linkedChange', { count: undone.length - 1 }) })
+    : t('undo.done', { what }));
 }
 
 /* ---------- Header ---------- */
 
 function renderTabs() {
-  els.tabs.replaceChildren(...TABS.map((t) => h('li', null, h('a', { href: t.hash, 'data-tab': t.name }, t.label))));
+  els.tabs.replaceChildren(...TABS.map((tab) => h('li', null, h('a', { href: tab.hash, 'data-tab': tab.name }, t(tab.label)))));
+  updateTabs(state.current?.name);
 }
 
 function updateTabs(active) {
@@ -498,7 +294,7 @@ function updateTabs(active) {
     const name = a.dataset.tab;
     if (name === active) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
-    a.setAttribute('href', state.lastHash.get(name) ?? TABS.find((t) => t.name === name).hash);
+    a.setAttribute('href', state.lastHash.get(name) ?? TABS.find((tab) => tab.name === name).hash);
   }
 }
 
@@ -515,20 +311,21 @@ function renderHeader() {
   const badge = els.changeBadge;
   badge.classList.toggle('is-pending', pending > 0);
   badge.classList.toggle('badge--success', pending === 0 && total > 0);
-  badge.textContent = pending > 0 ? `${plural(pending, 'change')} not yet exported` : (total > 0 ? 'All changes exported' : 'No changes yet');
+  if (pending > 0) badge.textContent = t('header.pending', { count: pending });
+  else badge.textContent = t(total > 0 ? 'header.allExported' : 'header.noChanges');
 
-  els.undoBtn.disabled = ctx.editor.journal().length === 0;
+  els.undoBtn.disabled = ctx.editor.journalLength === 0;
 
-  els.workSummary.replaceChildren('Work file', ...(state.workUnsaved
-    ? [h('span', { class: 'changed-dot', 'aria-hidden': 'true' }), h('span', { class: 'sr-only' }, ' (not saved)')]
+  els.workSummary.replaceChildren(t('header.workFile'), ...(state.workUnsaved
+    ? [h('span', { class: 'changed-dot', 'aria-hidden': 'true' }), h('span', { class: 'sr-only' }, t('header.notSaved'))]
     : []));
-  let note = 'Save your work as a file to continue next time.';
-  if (state.workUnsaved) note = 'This browser keeps a backup. Save the work file to keep your work safe and to continue on another computer.';
-  else if (state.workSavedAt) note = `Saved at ${state.workSavedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`;
+  let note = t('header.noteDefault');
+  if (state.workUnsaved) note = t('header.noteUnsaved');
+  else if (state.workSavedAt) note = t('header.noteSaved', { time: state.workSavedAt.toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' }) });
   els.workNote.textContent = note;
 
-  const tab = TABS.find((t) => t.name === state.current?.name);
-  document.title = `${pending > 0 ? '* ' : ''}${tab ? `${tab.label} · ` : ''}${APP_NAME}`;
+  const tab = TABS.find((x) => x.name === state.current?.name);
+  document.title = `${pending > 0 ? '* ' : ''}${tab ? `${t(tab.label)} · ` : ''}${t('app.name')}`;
   syncHeaderHeight();
 }
 
@@ -538,24 +335,8 @@ function closeMenu() {
 
 /* ---------- Router ---------- */
 
-function safeDecode(s) {
-  try {
-    return decodeURIComponent(s);
-  } catch {
-    return s;
-  }
-}
-
-function parseRoute(hash) {
-  const [name, a] = String(hash ?? '').replace(/^#\/?/, '').split('/').filter(Boolean).map(safeDecode);
-  switch (name) {
-    case 'exercises': return { name, params: { id: a } };
-    default: return null;
-  }
-}
-
 /** Opens a screen by its hash, for example "#/exercises/429". @param {string} hash */
-export function navigate(hash) {
+function navigate(hash) {
   if (location.hash === hash) route(true);
   else location.hash = hash;
 }
@@ -577,7 +358,8 @@ function route(force) {
 function renderRoute(r, key, scrollTop) {
   routeAbort?.abort();
   routeAbort = new AbortController();
-  const spec = getView(r.name) ?? null;
+  // parseRoute returns only names that a screen module registers.
+  const spec = getView(r.name);
   const container = h('div', { class: 'view', 'data-view': r.name });
   els.viewRoot.replaceChildren(container);
   state.current = { name: r.name, key, params: r.params, spec, root: container };
@@ -585,19 +367,11 @@ function renderRoute(r, key, scrollTop) {
   renderHeader();
   if (scrollTop) window.scrollTo(0, 0);
 
-  if (!spec) {
-    container.append(h('div', { class: 'placeholder-view' }, emptyState({
-      title: 'This screen is not ready yet',
-      body: `The ${r.name} screen is not part of this version of the app.`
-    })));
-  } else {
-    try {
-      spec.render(container, state.ctx, r.params, routeAbort.signal);
-    } catch (err) {
-      console.error(err);
-      container.append(notice('error', 'This screen ran into a problem',
-        p(`${errorText(err)} Your changes are safe. Try another tab or reload the folder.`)));
-    }
+  try {
+    spec.render(container, state.ctx, r.params, routeAbort.signal);
+  } catch (err) {
+    console.error(err);
+    container.append(notice('error', t('app.screenError'), p(t('app.screenErrorBody', { error: coreText(err) }))));
   }
   if (document.activeElement === document.body) els.main.focus({ preventScroll: true });
 }
@@ -621,24 +395,24 @@ function scheduleViewNotify() {
 
 /* ---------- Global events ---------- */
 
-async function confirmNewFolder() {
+async function confirmNewExercisesFile() {
   closeMenu();
   const pending = state.ctx?.editor.unexportedCount() ?? 0;
   if (!pending && !state.workUnsaved) {
-    pickFolder();
+    pickExercisesFile();
     return;
   }
   const risks = [
-    pending ? `${plural(pending, 'change')} not yet exported` : null,
-    state.workUnsaved ? 'work not yet saved as a work file' : null
+    pending ? t('newFile.pending', { count: pending }) : null,
+    state.workUnsaved ? t('newFile.unsaved') : null
   ].filter(Boolean);
   const ok = await confirmDialog({
-    title: 'Choose another data folder?',
-    body: `You have ${risks.join(' and ')}. Export your changes and save the work file first to be safe. This browser keeps a backup only for the same files.`,
-    confirmLabel: 'Choose another folder',
+    title: t('newFile.title'),
+    body: t('newFile.body', { risks: risks.join(t('common.and')) }),
+    confirmLabel: t('newFile.confirm'),
     danger: true
   });
-  if (ok) pickFolder();
+  if (ok) pickExercisesFile();
 }
 
 function onKeyDown(e) {
@@ -686,22 +460,26 @@ export function boot() {
     undoBtn: byId('undo-btn'),
     workMenu: byId('work-menu'),
     workNote: byId('work-menu-note'),
-    folderInput: byId('folder-input'),
+    langSlot: byId('lang-slot'),
+    exercisesInput: byId('exercises-input'),
     workInput: byId('work-input')
   });
   els.workSummary = els.workMenu.querySelector('summary');
   state.initialHash = location.hash;
+  applyStatic();
+  els.langSlot.replaceChildren(langSwitch());
+  onLangChange(onLangSwitch);
 
-  els.folderInput.addEventListener('change', onFolderChosen);
-  els.workInput.addEventListener('change', onWorkChosen);
-  byId('export-btn').addEventListener('click', openExport);
+  els.exercisesInput.addEventListener('change', onExercisesChosen);
+  els.workInput.addEventListener('change', () => workFile.chooseWorkFile(shell, els.workInput.files?.[0]));
+  byId('export-btn').addEventListener('click', startExport);
   els.undoBtn.addEventListener('click', doUndo);
   byId('work-save-btn').addEventListener('click', saveWork);
   byId('work-open-btn').addEventListener('click', () => {
     closeMenu();
     pickWorkFile();
   });
-  byId('folder-again-btn').addEventListener('click', confirmNewFolder);
+  byId('exercises-again-btn').addEventListener('click', confirmNewExercisesFile);
   document.addEventListener('click', (e) => {
     if (els.workMenu.open && !els.workMenu.contains(e.target)) closeMenu();
   });

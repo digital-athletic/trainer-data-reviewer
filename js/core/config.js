@@ -1,7 +1,10 @@
 // Repository specific values. Update this file when the app moves to another
 // repository or when the developer changes a pinned test.
 
-/** Folder of the data files inside the target repository. Used in changelog and export texts. */
+/**
+ * Folder in the target repository that holds Exercises.json and the skillTrees folder.
+ * The welcome screen, the error texts, the export and the changelog build file paths from it.
+ */
 export const DATA_TARGET_PATH = 'athlete-mobile/assets/data/generator';
 
 /** Database table that stores per-athlete exercise and branch ids. */

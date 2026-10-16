@@ -4,7 +4,7 @@ import { load } from '../js/core/model.js';
 
 export const APP = join(import.meta.dirname, '..');
 
-// Small synthetic data that the repository tracks. Every issue type occurs at least once.
+// Small synthetic data that the repository tracks, with one planted violation.
 export const SAMPLE_DIR = join(import.meta.dirname, 'fixtures', 'sample');
 
 // A local copy of the real data folder. The repository never tracks it.
@@ -34,6 +34,30 @@ export function readRaw(dir = SAMPLE_DIR) {
 
 export const loadSample = () => load(readRaw(SAMPLE_DIR));
 export const loadReal = () => load(readRaw(REAL_DIR));
+
+/**
+ * Installs a Map-backed localStorage for one test. failSet makes setItem throw like a full or blocked storage.
+ * @param {import('node:test').TestContext} t @param {{ failSet?: boolean }} [opts]
+ */
+export function stubStorage(t, { failSet = false } = {}) {
+  const items = new Map();
+  const storage = {
+    items,
+    get length() {
+      return items.size;
+    },
+    key: (i) => [...items.keys()][i] ?? null,
+    getItem: (k) => (items.has(k) ? items.get(k) : null),
+    setItem: (k, v) => {
+      if (failSet) throw new Error('QuotaExceededError');
+      items.set(k, String(v));
+    },
+    removeItem: (k) => items.delete(k)
+  };
+  Object.defineProperty(globalThis, 'localStorage', { value: storage, configurable: true, writable: true });
+  t.after(() => { delete globalThis.localStorage; });
+  return storage;
+}
 
 /** Line counts of both texts and the indexes of lines that differ. */
 export function differingLines(a, b) {

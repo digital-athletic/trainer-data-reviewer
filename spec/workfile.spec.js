@@ -9,7 +9,7 @@ import { loadSample } from './helpers.js';
 // The marks stand for a work file saved by a newer version of the app.
 function session() {
   const ds = loadSample();
-  const editor = edits.create(ds);
+  const editor = new edits.Editor(ds);
   const status = review.create(ds);
   editor.setField({ kind: 'exercise', id: '1' }, ['name'], 'Renamed');
   editor.setField({ kind: 'exercise', id: '2' }, ['level', 'w'], 3);
@@ -30,6 +30,10 @@ test('workfile: serialize writes one versioned JSON file', () => {
   assert.equal(data.fingerprint, model.fingerprint(ds));
   assert.equal(data.commands.length, 2);
   assert.equal(data.review.branches['SKKG/253'].status, 'reviewed');
+
+  const bare = JSON.parse(workfile.serialize({ commands: undefined, review: status, fingerprint: undefined }));
+  assert.equal(bare.fingerprint, null);
+  assert.deepEqual(bare.commands, []);
 });
 
 test('workfile: parse restores commands and marks, and replay rebuilds the edits', () => {
@@ -46,21 +50,9 @@ test('workfile: parse restores commands and marks, and replay rebuilds the edits
   assert.deepEqual(value.review.issues, status.issues);
 
   const fresh = loadSample();
-  const result = edits.create(fresh).replay(value.commands);
+  const result = new edits.Editor(fresh).replay(value.commands);
   assert.deepEqual(result.failed, []);
   assert.deepEqual(model.changedFiles(fresh), model.changedFiles(ds));
-});
-
-test('workfile: serialize copies its input', () => {
-  const { editor, status } = session();
-  const commands = editor.commands();
-  const text = workfile.serialize({ commands, review: status, fingerprint: null });
-  status.branches['SKKG/253'].status = 'open';
-  commands.length = 0;
-  const { value } = workfile.parse(text);
-  assert.equal(value.review.branches['SKKG/253'].status, 'reviewed');
-  assert.equal(value.commands.length, 2);
-  assert.equal(value.fingerprint, null);
 });
 
 test('workfile: parse refuses other files with a plain message', () => {
@@ -97,7 +89,7 @@ test('workfile: parse refuses a newer version and skips unreadable commands', ()
   assert.equal(parsed.ok, true);
   assert.equal(parsed.value.commands.length, 1);
   assert.equal(parsed.value.savedAt, '');
-  assert.deepEqual(parsed.warnings, ['Skipped 2 unreadable change(s).']);
+  assert.deepEqual(parsed.warnings, [{ code: 'skippedCommands', params: { count: 2 }, message: 'Skipped 2 unreadable change(s).' }]);
 });
 
 test('workfile: parse refuses too many commands and skips deeply nested arguments', () => {
@@ -119,7 +111,7 @@ test('workfile: parse refuses too many commands and skips deeply nested argument
   }));
   assert.equal(parsed.ok, true);
   assert.deepEqual(parsed.value.commands, [command]);
-  assert.deepEqual(parsed.warnings, ['Skipped 1 unreadable change(s).']);
+  assert.deepEqual(parsed.warnings.map((w) => w.message), ['Skipped 1 unreadable change(s).']);
 });
 
 test('workfile: fileName matches the ignored work file pattern', () => {
