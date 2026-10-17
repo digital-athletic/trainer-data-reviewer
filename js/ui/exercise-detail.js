@@ -475,10 +475,10 @@ function deleteSection(ctx, id) {
   function build() {
     if (id === model.PAUSE_ID) return h('p', { class: 'small muted' }, t('core.pauseNoDelete'));
     const refs = referencesTo(ctx.ds, id);
+    let usage = t(ctx.ds.treeNames.length ? 'detail.notUsed' : 'detail.notUsedNoTrees');
+    if (refs.length) usage = t('detail.inUseBy', { refs: t('count.reference', { count: refs.length }) });
     return [
-      h('p', { class: 'small muted' }, refs.length
-        ? t('detail.inUseBy', { refs: t('count.reference', { count: refs.length }) })
-        : t('detail.notUsed')),
+      h('p', { class: 'small muted' }, usage),
       h('div', null, h('button', {
         type: 'button', class: 'btn btn--small btn--danger-outline', 'data-fkey': 'delete', onclick: () => deleteFlow(ctx, id)
       }, t('detail.deleteConfirm')))
@@ -530,7 +530,9 @@ export function render(root, ctx, exerciseId, { focus = null, nav = null } = {})
     title.textContent = model.exerciseLabel(r) || t('common.noName');
     const n = (ctx.ds.index.branchRefsByExerciseId.get(id) ?? []).length;
     let usage = h('span', { class: 'badge' }, t('detail.systemExercise'));
-    if (id !== model.PAUSE_ID) {
+    if (id !== model.PAUSE_ID && !ctx.ds.treeNames.length) {
+      usage = h('span', { class: 'badge' }, t('detail.treesMissing'));
+    } else if (id !== model.PAUSE_ID) {
       usage = n
         ? h('span', { class: 'badge' }, t('detail.usedOn', { count: n }))
         : h('span', { class: 'badge badge--advisory' }, t('detail.notInBranch'));

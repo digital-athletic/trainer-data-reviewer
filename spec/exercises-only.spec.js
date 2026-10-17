@@ -74,7 +74,11 @@ test('exercises only: a work file round trip replays on a fresh load', () => {
   assert.deepEqual(model.changedFiles(fresh), model.changedFiles(ds));
 });
 
-test('exercises only: a work file saved for the data folder gives a fingerprint mismatch, no crash', () => {
+test('exercises only: the fingerprint matches the full sample, so backups fit with and without skill trees', () => {
+  assert.equal(model.fingerprint(loadExercisesOnly()), model.fingerprint(loadSample()));
+});
+
+test('exercises only: a work file with a branch change replays without it, no crash', () => {
   const folder = loadSample();
   const old = new edits.Editor(folder);
   old.setField(ex('1'), ['name'], 'Renamed');
@@ -85,7 +89,6 @@ test('exercises only: a work file saved for the data folder gives a fingerprint 
   const parsed = workfile.parse(text);
   assert.equal(parsed.ok, true);
   const ds = loadExercisesOnly();
-  assert.notEqual(parsed.value.fingerprint, model.fingerprint(ds));
   const result = new edits.Editor(ds).replay(parsed.value.commands);
   assert.equal(result.applied, old.commands().length - 1);
   assert.equal(result.failed.length, 1);

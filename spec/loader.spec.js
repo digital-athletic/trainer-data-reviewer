@@ -118,6 +118,40 @@ test('loader: readFileList refuses a file above 50 MB without reading it', async
   assert.deepEqual(r.errors[0].params, { path: 'Exercises.json', mb: 50 });
 });
 
+// Builds browser-like File objects for the picked skill tree files, as a multi-file pick yields them.
+const treeFiles = (raw, names) => names.map((name) => ({ name, size: 10, text: async () => raw[`skillTrees/${name}`] }));
+
+test('loader: readTreeFiles reads picked skill tree files into skillTrees keys', async () => {
+  const raw = readRaw(SAMPLE_DIR);
+  const r = await loader.readTreeFiles(treeFiles(raw, ['BAS.json', 'SKKG.json', 'SUPPORT.json']));
+  assert.deepEqual(r.errors, []);
+  const { 'Exercises.json': _, ...trees } = raw;
+  assert.deepEqual(r.raw, trees);
+});
+
+test('loader: readTreeFiles refuses Exercises.json, other file types and files above 50 MB', async () => {
+  let read = false;
+  const big = { name: 'BIG.json', size: loader.MAX_DATA_FILE_BYTES + 1, text: async () => { read = true; return '{}'; } };
+  const files = [
+    { name: 'Exercises.json', size: 2, text: async () => '[]' },
+    { name: 'notes.ts', size: 2, text: async () => '' },
+    big,
+    { name: 'BAS.json', size: 2, text: async () => '{}' }
+  ];
+  const r = await loader.readTreeFiles(files);
+  assert.equal(read, false);
+  assert.deepEqual(r.raw, { 'skillTrees/BAS.json': '{}' });
+  assert.deepEqual(r.errors.map((e) => e.code), ['notTreeFile', 'notTreeFile', 'treeTooLarge']);
+  assert.equal(r.errors[0].params.path, loader.TREES_PATH);
+  assert.equal(loader.TREES_PATH, 'athlete-mobile/assets/data/generator/skillTrees');
+});
+
+test('loader: readTreeFiles reports an unreadable file', async () => {
+  const r = await loader.readTreeFiles([{ name: 'BAS.json', size: 2, text: async () => { throw new Error('locked'); } }]);
+  assert.deepEqual(r.raw, {});
+  assert.deepEqual(r.errors.map((e) => e.message), ['The browser could not read BAS.json.']);
+});
+
 test('loader (real data): readFileList reads the real folder', REAL, async () => {
   const r = await loader.readFileList(fileList(REAL_DIR, 'generator'));
   assert.deepEqual(r.errors, []);

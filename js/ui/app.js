@@ -18,6 +18,8 @@ const TABS = [
 const EXERCISES_PATH = model.REPO_BASE + model.EXERCISES;
 /** The closing line of every load error. */
 const EXPECTED = { key: 'app.expected', params: { path: DATA_TARGET_PATH } };
+/** The closing line of every skill tree load error. */
+const TREES_EXPECTED = { key: 'load.treesExpected', params: { path: loader.TREES_PATH } };
 
 /**
  * @typedef {{ key: string, params?: Record<string, unknown> } | import('../core/messages.js').Message | Error | string} Line
@@ -31,6 +33,8 @@ const state = {
   workUnsaved: false,
   workSavedAt: null,
   pendingWork: null,
+  /** @type {model.RawFiles} the picked skill tree files; every Exercises.json loads with them */
+  trees: {},
   initialHash: '',
   current: null,
   lastHash: new Map(),
@@ -86,12 +90,13 @@ function onLangSwitch() {
 
 /* ---------- Welcome and loading ---------- */
 
-function renderWelcome() {
-  const copyBtn = h('button', {
-    type: 'button', class: 'btn btn--small',
-    onclick: async () => toast(t(await copyText(EXERCISES_PATH) ? 'welcome.copied' : 'welcome.copyFailed'))
-  }, t('welcome.copy'));
+/** A path with its copy button. @param {string} path */
+const copyBox = (path) => h('div', { class: 'copy-box' }, h('code', null, path), h('button', {
+  type: 'button', class: 'btn btn--small',
+  onclick: async () => toast(t(await copyText(path) ? 'welcome.copied' : 'welcome.copyFailed'))
+}, t('welcome.copy')));
 
+function renderWelcome() {
   const chooseArea = state.loading
     ? h('p', { class: 'loading', role: 'status' }, t('welcome.reading'))
     : h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn btn--primary btn--large', onclick: pickExercisesFile }, t('welcome.choose')));
@@ -100,6 +105,11 @@ function renderWelcome() {
   const workArea = pending
     ? notice('success', t('welcome.ready', { name: pending.name }), t('welcome.readyBody'))
     : h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn', onclick: pickWorkFile }, t('header.workOpen')));
+
+  const treeCount = Object.keys(state.trees).length;
+  const treesArea = treeCount
+    ? notice('success', t('welcome.ready', { name: t('count.tree', { count: treeCount }) }), t('welcome.treesReady'))
+    : h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn', onclick: pickTreeFiles }, t('header.trees')));
 
   const error = state.welcomeError;
   els.viewRoot.replaceChildren(h('div', { class: 'welcome' },
@@ -112,9 +122,15 @@ function renderWelcome() {
       h('li', { class: 'step step--main' }, h('div', { class: 'step__body' },
         h('h2', { class: 'step__title' }, t('welcome.choose')),
         p(t('welcome.step1Body')),
-        h('div', { class: 'copy-box' }, h('code', null, EXERCISES_PATH), copyBtn),
+        copyBox(EXERCISES_PATH),
         p(t('welcome.step1Rename')),
         chooseArea)),
+      h('li', { class: ['step', treeCount ? 'step--done' : ''] }, h('div', { class: 'step__body' },
+        h('h2', { class: 'step__title' }, t('welcome.treesTitle')),
+        p(t('welcome.treesBody')),
+        copyBox(loader.TREES_PATH),
+        p(t('welcome.treesSelect')),
+        treesArea)),
       h('li', { class: ['step', pending ? 'step--done' : ''] }, h('div', { class: 'step__body' },
         h('h2', { class: 'step__title' }, t('welcome.step2Title')),
         p(t('welcome.step2Body')),
@@ -135,6 +151,12 @@ function pickExercisesFile() {
 function pickWorkFile() {
   els.workInput.value = '';
   els.workInput.click();
+}
+
+function pickTreeFiles() {
+  closeMenu();
+  els.treesInput.value = '';
+  els.treesInput.click();
 }
 
 /** @param {string} title dictionary key @param {Line[]} lines */
@@ -175,7 +197,7 @@ async function onExercisesChosen() {
   }
   let ds;
   try {
-    ds = model.load(res.raw);
+    ds = model.load({ ...state.trees, ...res.raw });
     startSession(new edits.Editor(ds));
   } catch (err) {
     loadFailed('load.loadFailed', [err, EXPECTED]);
@@ -191,6 +213,41 @@ async function onExercisesChosen() {
   const work = state.pendingWork;
   state.pendingWork = null;
   if (work) await workFile.openWork(shell, work);
+}
+
+/** @param {Line[]} lines */
+const treesFailed = (lines) => loadFailed('load.treesFailed', [...lines, TREES_EXPECTED]);
+
+/** Reads the picked skill tree files. In a session, they replace the loaded skill trees. */
+async function onTreesChosen() {
+  const { files } = els.treesInput;
+  if (!files?.length) return;
+  let res;
+  try {
+    res = await loader.readTreeFiles(files);
+  } catch (err) {
+    treesFailed([err]);
+    return;
+  }
+  if (res.errors.length) {
+    treesFailed(res.errors);
+    return;
+  }
+  let swapped = null;
+  try {
+    if (state.ctx) swapped = workFile.swapTrees(shell, res.raw);
+    else model.load({ [model.EXERCISES]: '[]', ...res.raw });
+  } catch (err) {
+    treesFailed([err]);
+    return;
+  }
+  state.trees = res.raw;
+  if (swapped) {
+    workFile.reportTrees(swapped);
+    return;
+  }
+  state.welcomeError = null;
+  renderWelcome();
 }
 
 /* ---------- Session ---------- */
@@ -462,7 +519,8 @@ export function boot() {
     workNote: byId('work-menu-note'),
     langSlot: byId('lang-slot'),
     exercisesInput: byId('exercises-input'),
-    workInput: byId('work-input')
+    workInput: byId('work-input'),
+    treesInput: byId('trees-input')
   });
   els.workSummary = els.workMenu.querySelector('summary');
   state.initialHash = location.hash;
@@ -480,6 +538,8 @@ export function boot() {
     pickWorkFile();
   });
   byId('exercises-again-btn').addEventListener('click', confirmNewExercisesFile);
+  els.treesInput.addEventListener('change', onTreesChosen);
+  byId('trees-btn').addEventListener('click', pickTreeFiles);
   document.addEventListener('click', (e) => {
     if (els.workMenu.open && !els.workMenu.contains(e.target)) closeMenu();
   });

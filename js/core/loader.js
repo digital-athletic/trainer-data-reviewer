@@ -13,6 +13,8 @@ export const PROJECT_ERROR = Object.freeze(msg('projectFolder', { path: `${DATA_
 export const MISSING_ERROR = Object.freeze(msg('onlyExercises', { path: `${DATA_TARGET_PATH}/Exercises.json` }));
 /** The app refuses a picked data file above this size in bytes. */
 export const MAX_DATA_FILE_BYTES = 50 * 1024 * 1024;
+/** The folder of the skill tree files in the target repository. */
+export const TREES_PATH = `${DATA_TARGET_PATH}/skillTrees`;
 const [PROJECT_FOLDER] = DATA_TARGET_PATH.split('/');
 
 const segments = (entry) => String(entry.relativePath ?? '').replace(/\\/g, '/').split('/').filter(Boolean);
@@ -78,4 +80,36 @@ export async function readFileList(fileList) {
     else raw[key] = text;
   }
   return { raw, ignored: picked.ignored, errors };
+}
+
+/**
+ * Browser only: reads picked skill tree files into a RawFiles map keyed "skillTrees/<name>".
+ * Every picked file must be a .json file other than Exercises.json. model.load checks the content.
+ * @param {ArrayLike<{ name: string, size: number, text(): Promise<string> }>} fileList
+ * @returns {Promise<ReadResult>}
+ */
+export async function readTreeFiles(fileList) {
+  const files = Array.from(fileList ?? []);
+  const results = await Promise.all(files.map(async (file) => {
+    const { name } = file;
+    if (!/^[^/\\]+\.json$/.test(name) || name === 'Exercises.json') {
+      return { error: msg('notTreeFile', { name, path: TREES_PATH }) };
+    }
+    if (file.size > MAX_DATA_FILE_BYTES) {
+      return { error: msg('treeTooLarge', { path: name, mb: MAX_DATA_FILE_BYTES / (1024 * 1024) }) };
+    }
+    try {
+      return { key: `skillTrees/${name}`, text: await file.text() };
+    } catch {
+      return { error: msg('unreadable', { path: name }) };
+    }
+  }));
+  /** @type {RawFiles} */
+  const raw = {};
+  const errors = [];
+  for (const { key, text, error } of results) {
+    if (error) errors.push(error);
+    else raw[key] = text;
+  }
+  return { raw, ignored: 0, errors };
 }

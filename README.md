@@ -1,6 +1,6 @@
 # Coach data reviewer
 
-The coach data reviewer is a web page. You use it to check and correct the exercise catalog (Übungskatalog) that the app builds training plans from. The app reads one file, `Exercises.json`. You need no extra software. The page reads the file inside the browser and never uploads it.
+The coach data reviewer is a web page. You use it to check and correct the exercise catalog (Übungskatalog) that the app builds training plans from. The app reads `Exercises.json` and, if you add them, the skill tree files. You need no extra software. The page reads the files inside the browser and never uploads them.
 
 The app has one screen:
 
@@ -25,6 +25,15 @@ The app does not contain the training data. You keep the file `Exercises.json` o
 3. In the app, click "Choose Exercises.json" and pick the file.
 
 The header then shows "1,210 exercises". If you picked another file, the file holds no valid exercise list, or the file is larger than 50 MB, the app tells you what it expected.
+
+### 2a. Optional: choose the skill tree files
+
+With the skill tree files, the app shows which branches use an exercise and refuses to delete an exercise that a branch still uses. Without them, the exercise page shows "Skill trees not loaded".
+
+1. Click "Choose skill tree files", on the start page or in the "Work file" menu.
+2. Open the folder `athlete-mobile/assets/data/generator/skillTrees` and select all `.json` files in it, for example with Ctrl+A.
+
+The header then also shows the branch and skill tree counts. The app keeps the skill trees when you choose another `Exercises.json`. Picking skill tree files again replaces the earlier ones. If you deleted an exercise before you loaded the skill trees and a branch uses it, the app takes the delete back and tells you.
 
 ### 3. Correct the exercises
 
@@ -53,8 +62,8 @@ The app also keeps a backup of your work in this browser after every change. Eac
 
 ### 6. Next time
 
-1. Open the app and choose `Exercises.json`.
-2. Click "Open work file" and pick the newest `coach-review-work-DATE.json`. Your changes come back.
+1. Open the app and choose `Exercises.json`, and the skill tree files if you use them.
+2. Click "Open work file" and pick the newest `coach-review-work-DATE.json`. Your changes come back. The work file fits with and without the skill tree files.
 
 If the developer has merged your changes in the meantime, get a fresh `Exercises.json` first. The app then warns that the work file belongs to other data and lists the changes that no longer fit. A work file saved with the older app version, which read the whole data folder, gets the same warning.
 

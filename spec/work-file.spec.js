@@ -5,7 +5,7 @@ import * as model from '../js/core/model.js';
 import * as review from '../js/core/review.js';
 import * as workfile from '../js/core/workfile.js';
 import { AutoSave, PREFIX } from '../js/ui/autosave.js';
-import { buildBackup, replaceWork, replayOnFreshCopy, settleRestore } from '../js/ui/work-file.js';
+import { buildBackup, replaceWork, replayOnFreshCopy, settleRestore, swapTrees } from '../js/ui/work-file.js';
 import { loadSample, readRaw, stubStorage } from './helpers.js';
 
 const ex = (id) => ({ kind: 'exercise', id });
@@ -179,4 +179,59 @@ test('work file: opening a work file replaces the old backup', (t) => {
   assert.equal(backup.unsaved, false);
   assert.deepEqual(backup.work.commands, work.commands);
   assert.notEqual(app.state.ctx.ds.index.exerciseById.get('2').name, 'Session edit');
+});
+
+// Starts the stub session on Exercises.json alone, as the app does before the trainer picks skill trees.
+function exercisesOnlyShell() {
+  const app = stubShell();
+  const raw = readRaw();
+  app.startSession(new edits.Editor(model.load({ 'Exercises.json': raw['Exercises.json'] })));
+  const { 'Exercises.json': _, ...trees } = raw;
+  return { app, trees };
+}
+
+test('work file: swapTrees loads the skill trees, keeps the edits and the backup key', (t) => {
+  const storage = stubStorage(t);
+  const { app, trees } = exercisesOnlyShell();
+  const key = PREFIX + app.state.fingerprint;
+  const before = app.state.ctx;
+  before.editor.setField(ex('1'), ['name'], 'Kept');
+  before.editor.markExported();
+  before.review.issues.note = { text: 'kept' };
+  app.state.workSavedAt = new Date(0);
+
+  const { editor, result } = swapTrees(app, trees);
+  assert.deepEqual(result, { applied: 1, failed: [] });
+  assert.equal(app.state.ctx.editor, editor);
+  assert.deepEqual(app.state.ctx.ds.treeNames, ['BAS', 'SKKG', 'SUPPORT']);
+  assert.equal(app.state.ctx.ds.index.exerciseById.get('1').name, 'Kept');
+  assert.equal(app.state.ctx.review.issues.note.text, 'kept');
+  assert.equal(app.state.fingerprint, key.slice(PREFIX.length));
+  assert.equal(editor.unexportedCount(), 0, 'the export mark carries over');
+  assert.equal(app.state.workUnsaved, false);
+  assert.deepEqual(app.state.workSavedAt, new Date(0));
+  assert.equal(app.routes, 1);
+  assert.deepEqual(stored(storage, key).work.commands, editor.commands());
+});
+
+test('work file: swapTrees drops a delete of an exercise that a branch uses', (t) => {
+  stubStorage(t);
+  const { app, trees } = exercisesOnlyShell();
+  assert.equal(app.state.ctx.editor.deleteExercise('15').ok, true, 'without skill trees nothing refers to 15');
+
+  const { editor, result } = swapTrees(app, trees);
+  assert.equal(result.applied, 0);
+  assert.equal(result.failed.length, 1);
+  assert.equal(result.failed[0].command.method, 'deleteExercise');
+  assert.equal(result.failed[0].errors[0].code, 'inUse');
+  assert.ok(editor.ds.index.exerciseById.has('15'));
+  assert.equal(app.state.workUnsaved, true, 'the dropped delete changes the work');
+});
+
+test('work file: swapTrees keeps the session when a skill tree file does not load', (t) => {
+  stubStorage(t);
+  const { app } = exercisesOnlyShell();
+  const before = app.state.ctx;
+  assert.throws(() => swapTrees(app, { 'skillTrees/BAD.json': '[]' }), { code: 'treeNotObject' });
+  assert.equal(app.state.ctx, before);
 });

@@ -31,13 +31,27 @@ test('model: every sample file except SUPPORT round trips through JSON.stringify
   assert.equal(raw['skillTrees/SUPPORT.json'], '{\n\n}');
 });
 
-test('model: fingerprint is stable and changes with the raw text', () => {
+test('model: fingerprint is stable and changes with the raw text of Exercises.json', () => {
   const a = model.fingerprint(loadSample());
   assert.match(a, /^[0-9a-f]{8}$/);
   assert.equal(model.fingerprint(loadSample()), a);
   const raw = readRaw();
-  raw['skillTrees/SUPPORT.json'] = '{}';
+  raw['Exercises.json'] = raw['Exercises.json'].trimEnd();
   assert.notEqual(model.fingerprint(model.load(raw)), a);
+});
+
+test('model: fingerprint ignores the skill tree files', () => {
+  const a = model.fingerprint(loadSample());
+  const raw = readRaw();
+  raw['skillTrees/SUPPORT.json'] = '{}';
+  assert.equal(model.fingerprint(model.load(raw)), a);
+  assert.equal(model.fingerprint(model.load({ 'Exercises.json': raw['Exercises.json'] })), a);
+});
+
+test('model: load refuses a skill tree whose branches are not records', () => {
+  const raw = readRaw();
+  raw['skillTrees/WORK.json'] = JSON.stringify({ kind: 'coach-data-review-work', version: 1 });
+  assert.throws(() => model.load(raw), { code: 'treeNotObject', params: { path: 'skillTrees/WORK.json' } });
 });
 
 test('model: buildIndex maps references, other sides and tag counts', () => {
