@@ -497,6 +497,11 @@ export class Editor {
     this.#exported = new Map(this.netChanges().map((c) => [changeKey(c), M.clone(c.newValue)]));
   }
 
+  /** Takes over the export mark of another editor on the same Exercises.json. @param {Editor} other */
+  copyExportMark(other) {
+    this.#exported = other.#exported && new Map(other.#exported);
+  }
+
   /**
    * Net changes that differ from the last export, plus exported changes that are gone.
    * Before any export it equals changeCount().

@@ -11,7 +11,7 @@ Each file in `js/core/` is a native ES module with named exports. The UI imports
 | `edits.js` | `Editor`, `referencesTo`, `emptyParameter` |
 | `review.js` | `create`, `parseValue` |
 | `changelog.js` | `build`, `pinnedTestNotes`, `newTags` |
-| `loader.js` | `pickDataFiles`, `readFileList` (async), `MAX_DATA_FILE_BYTES`, `PROJECT_ERROR`, `MISSING_ERROR` |
+| `loader.js` | `pickDataFiles`, `readFileList` (async), `readTreeFiles` (async), `MAX_DATA_FILE_BYTES`, `TREES_PATH`, `PROJECT_ERROR`, `MISSING_ERROR` |
 | `workfile.js` | `KIND`, `MAX_FILE_BYTES`, `MAX_COMMANDS`, `fileName`, `serialize`, `parse` |
 | `messages.js` | `MESSAGES`, `format`, `msg`, `messageError` |
 
@@ -44,11 +44,12 @@ Core never imports UI code, and it returns its user-visible texts as messages. `
 
 ## Loader
 
-The app picks the single file `Exercises.json`. `model.load(raw)` needs `raw['Exercises.json']` and accepts any number of `skillTrees/*.json` entries, zero included.
+The app picks the single file `Exercises.json` and, as an option, the skill tree files in a second picker. `model.load(raw)` needs `raw['Exercises.json']` and accepts any number of `skillTrees/*.json` entries, zero included. It refuses a skill tree that is not an object of branch records.
 
 - `loader.pickDataFiles(entries)` finds `Exercises.json` in the picked entries. For a single picked file it returns `trees: []`. For a picked folder it also returns the sibling `skillTrees/*.json`, whatever the folder is called.
 - `pickDataFiles` returns `MISSING_ERROR` when no entry is named `Exercises.json`, and `PROJECT_ERROR` when the entries hold the whole project folder.
 - `loader.readFileList(fileList)` is `async` and returns `{ raw, ignored, errors }`. It refuses a picked file larger than `MAX_DATA_FILE_BYTES` (50 MB) before it reads the text, and adds an error for it.
+- `loader.readTreeFiles(fileList)` is `async` and reads the picked skill tree files into `{ raw, ignored, errors }`, keyed `skillTrees/<name>`. A file dialog picks from one folder only, so the trainer picks the files of `TREES_PATH` in a second step. It refuses `Exercises.json`, a name that does not end in `.json` (`notTreeFile`) and a file larger than `MAX_DATA_FILE_BYTES` (`treeTooLarge`).
 
 ## Review
 
@@ -62,7 +63,7 @@ The app picks the single file `Exercises.json`. `model.load(raw)` needs `raw['Ex
 - `js/ui/routes.js`: `exerciseHash`, `parseRoute`.
 - `js/ui/terms.js`: `exerciseTagMeta`, `tagGroupLabel(prefix)` and `tagValueLabel(facet, tag, prefix)`. Each entry of `model.TAG_GROUPS` holds a `prefix` and a dictionary `key` under `tagGroup`. `tagValueLabel` looks a tag up under `tagValue.<facet>` and falls back to the tag without its prefix. `query.FACET_PREFIX` takes the prefixes of the skill, region, eq and place filters from `model.TAG_GROUPS` too.
 - `js/ui/registry.js` defines the `Ctx` typedef that every view receives.
-- `js/ui/work-file.js` saves and opens work files and restores the browser backup. `replayOnFreshCopy(ds, commands)` replays a command list on a fresh copy of the loaded files and returns `{ editor, result, count }`. `settleRestore(app, saved, editor, restore)` applies the trainer's answer on a backup: restore starts a session and rewrites the backup with its `unsaved` flag, decline removes the backup. `replaceWork(app, work, editor)` replaces the session and its backup with an opened work file.
+- `js/ui/work-file.js` saves and opens work files and restores the browser backup. `replayOnFreshCopy(ds, commands)` replays a command list on a fresh copy of the loaded files and returns `{ editor, result, count }`. `settleRestore(app, saved, editor, restore)` applies the trainer's answer on a backup: restore starts a session and rewrites the backup with its `unsaved` flag, decline removes the backup. `replaceWork(app, work, editor)` replaces the session and its backup with an opened work file. `swapTrees(app, trees)` loads the session's `Exercises.json` again with the picked skill tree files, replays the session's commands, and keeps the review part, the export mark and the work file state; it throws and keeps the session when a file does not load. `reportTrees(swapped)` lists the commands that failed on replay, such as a delete of an exercise that a branch uses.
 - `js/ui/autosave.js`: `AutoSave` writes the backup under the key `PREFIX` plus the data fingerprint, so each backup belongs to one `Exercises.json`. `read()` returns `{ work, unsaved }` for the backup of the current fingerprint, or `null`. It never offers the backup of another fingerprint, and `forget()` removes only the own entry. A backup stays in `localStorage` until the trainer chooses that `Exercises.json` again and declines the restore, or undoes every change of that session. `read()` ignores an entry whose text exceeds `workfile.MAX_FILE_BYTES`.
 - `js/ui/export-dialog.js`: `openExport` downloads the changed files and `changelog.md`.
 
@@ -77,7 +78,7 @@ The app picks the single file `Exercises.json`. `model.load(raw)` needs `raw['Ex
 - `journal()` returns a copy of the edits. `commands()` returns the public calls that `replay(commands)` applies again. `replay` returns `{ applied, failed }`.
 - The `journalLength` getter returns the number of edits without copying the journal.
 - `netChanges()` returns one entry per changed field, with the loaded value and the current value. `changeCount(changes?)` returns `netChanges().length`, or the length of `changes` when you pass them.
-- `markExported()` stores the new value of every net change, keyed by record key and field.
+- `markExported()` stores the new value of every net change, keyed by record key and field. `copyExportMark(other)` takes over that snapshot from another editor on the same `Exercises.json`.
 - `unexportedCount(changes?)` counts the net changes that are missing from that snapshot or hold another value, plus snapshot entries that are no longer a net change. Before any export it equals `changeCount()`. Pass the result of `netChanges()` to skip computing it twice.
 - `subscribe(fn)` calls `fn` with the applied edits after every change and returns a function that removes the listener.
 
@@ -101,13 +102,13 @@ One JSON file holds the edit journal and the review part. The file carries `kind
 - `parse` refuses a file with more than `MAX_COMMANDS` (50,000) commands. It skips a command that is not an object with a text `method` and a list `args` of plain JSON values, and adds a warning.
 - The app refuses a file larger than `MAX_FILE_BYTES` (5 MB) before it reads the file. The browser backup in `localStorage` goes through the same `parse`.
 - `workfile.fileName(date)` returns `coach-review-work-YYYY-MM-DD.json` with the local calendar date of `date`, which defaults to now.
-- `fingerprint` comes from `model.fingerprint(ds)`, a hash over the path and raw text of every loaded file. A work file saved by the older app version, which read the whole data folder, carries a fingerprint over `Exercises.json` and the skill trees. The app finds that fingerprint different from a load of `Exercises.json` alone and asks the trainer before it replays the work file. `replay` reports each branch command of such a file as failed. The app does not offer a browser backup under another fingerprint.
+- `fingerprint` comes from `model.fingerprint(ds)`, a hash over the path and raw text of `Exercises.json`. The skill tree files stay out of the hash, so a work file and a backup match with and without them. A work file saved by the older app version, which read the whole data folder, carries a fingerprint over `Exercises.json` and the skill trees. The app finds that fingerprint different and asks the trainer before it replays the work file. `replay` reports each branch command of such a file as failed. The app does not offer a browser backup under another fingerprint.
 
 ## Skill trees and branches
 
-The app UI loads no skill trees today: the trainer picks `Exercises.json` alone, so `ds.treeNames` is empty and the header shows the exercise count only. The core code keeps full skill tree support for a dataset that holds skill trees, and the specs load the three skill trees in `spec/fixtures/sample/skillTrees/`.
+The skill trees are optional. Without them, `ds.treeNames` is empty, the header shows the exercise count only, and the exercise page shows "Skill trees not loaded" instead of the branch usage. With them, the app shows the branches that use an exercise, and `deleteExercise` refuses an exercise that a branch level references. The UI edits no branch. The specs load the three skill trees in `spec/fixtures/sample/skillTrees/`.
 
-- Loading: `model.load` reads each `skillTrees/<TREE>.json` entry of `raw` into `ds.trees[TREE]`, an object of branches keyed by branch id. `ds.treeNames` lists the trees in sorted order. `ds.loadMax.branchId` holds the highest loaded branch id, and `Editor.highWater.branchId` starts from it. `loader.pickDataFiles` and `readFileList` collect the `skillTrees/*.json` files of a picked folder.
+- Loading: `model.load` reads each `skillTrees/<TREE>.json` entry of `raw` into `ds.trees[TREE]`, an object of branches keyed by branch id. `ds.treeNames` lists the trees in sorted order. `ds.loadMax.branchId` holds the highest loaded branch id, and `Editor.highWater.branchId` starts from it. `loader.readTreeFiles` reads the files of the skill tree picker, and `loader.pickDataFiles` and `readFileList` collect the `skillTrees/*.json` files of a picked folder. app.js keeps the picked skill trees and loads every later `Exercises.json` with them; a new pick replaces them.
 - Index: `model.buildIndex` maps each exercise id to the branch levels that use it (`branchRefsByExerciseId`), each branch id to its tree (`treeOfBranch`), and counts branch tags in `tagCounts.branch`. `model.stats` counts trees and branches.
 - Branch editing: `setField`, `setTags` and `revertField` accept the target `{ kind: 'branch', tree, branchId }`. Edits on a branch go to `skillTrees/<tree>.json`, and `changedFiles` exports that file. `undo` can revert an added or removed branch record, but no public `Editor` method adds or removes a branch.
 - The `levels` rule: `setField` refuses a path that starts with `levels` ("Branch levels change through the ladder."). `schema.validateBranch` accepts level keys 1 to 6 only, and each level must point to an exercise id. `deleteExercise` refuses an exercise that a branch level references.

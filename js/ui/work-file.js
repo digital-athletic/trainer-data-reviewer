@@ -80,6 +80,32 @@ export function replaceWork(app, work, editor) {
   startWork(app, work, editor, false);
 }
 
+/**
+ * Loads the session's Exercises.json again with the picked skill tree files, replays the session's
+ * commands and keeps the work file state. A delete fails on replay when a branch uses the exercise.
+ * Throws when the files do not load, and the session stays as it was.
+ * @param {Shell} app @param {model.RawFiles} trees
+ * @returns {{ editor: edits.Editor, result: ReturnType<edits.Editor['replay']> }}
+ */
+export function swapTrees(app, trees) {
+  const { state } = app;
+  const { ctx } = state;
+  const ds = model.load({ [model.EXERCISES]: ctx.ds.files[model.EXERCISES].raw, ...trees });
+  const editor = new edits.Editor(ds);
+  const result = editor.replay(ctx.editor.commands());
+  editor.copyExportMark(ctx.editor);
+  const { workSavedAt } = state;
+  startWork(app, { review: ctx.review }, editor, state.workUnsaved || result.failed.length > 0);
+  state.workSavedAt = workSavedAt;
+  app.renderHeader();
+  return { editor, result };
+}
+
+/** Tells the trainer that the skill trees loaded, and lists the changes that no longer fit. */
+export function reportTrees(swapped) {
+  reportWork(swapped, { done: t('load.treesLoaded', { trees: t('count.tree', { count: swapped.editor.ds.treeNames.length }) }) });
+}
+
 /** Tells the trainer that the work loaded, and lists warnings and failed commands. */
 function reportWork({ result }, { done, warnings = [] }) {
   const notes = [

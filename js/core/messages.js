@@ -63,6 +63,8 @@ export const MESSAGES = Object.freeze({
   onlyExercises: 'The app reads the file Exercises.json only. Pick {path}.',
   tooLarge: '{path} is larger than {mb} MB. The app does not read it. Pick the Exercises.json of the project.',
   unreadable: 'The browser could not read {path}.',
+  notTreeFile: '{name} is not a skill tree file. Pick the .json files from {path}.',
+  treeTooLarge: '{path} is larger than {mb} MB. The app does not read it.',
   // workfile.js
   notWorkFile: 'This file is not a work file of the coach data reviewer. Pick a coach-review-work file that this app saved.',
   newerWorkFile: 'This work file comes from a newer version of the app. Update the app and try again.',

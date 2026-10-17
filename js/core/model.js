@@ -133,7 +133,8 @@ export function load(raw) {
     } else {
       const match = /^skillTrees\/([^/]+)\.json$/.exec(path);
       if (!match || isUnsafeKey(match[1])) throw messageError('unexpectedFile', { path });
-      if (!isObject(data)) throw messageError('treeNotObject', { path });
+      // Every branch is a record, so a picked work file or other JSON object fails here.
+      if (!isObject(data) || !Object.values(data).every(isObject)) throw messageError('treeNotObject', { path });
       const [, treeName] = match;
       entry.treeName = treeName;
       trees[treeName] = data;
@@ -208,7 +209,11 @@ export function stats(ds) {
   return { exercises: ds.exercises.length, trees: ds.treeNames.length, branches };
 }
 
-/** FNV-1a, 32 bit, over every path and raw text in sorted path order. @param {Dataset} ds */
+/**
+ * FNV-1a, 32 bit, over the path and raw text of Exercises.json. The skill tree files are optional
+ * and the trainer edits no branch, so a backup or work file matches with and without them.
+ * @param {Dataset} ds
+ */
 export function fingerprint(ds) {
   let h = 0x811c9dc5;
   const feed = (s) => {
@@ -217,11 +222,9 @@ export function fingerprint(ds) {
       h = Math.imul(h, 0x01000193);
     }
   };
-  for (const path of Object.keys(ds.files).sort()) {
-    feed(path);
-    feed('\u0000');
-    feed(ds.files[path].raw);
-  }
+  feed(EXERCISES);
+  feed('\u0000');
+  feed(ds.files[EXERCISES].raw);
   return (h >>> 0).toString(16).padStart(8, '0');
 }
 
