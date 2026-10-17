@@ -7,7 +7,7 @@ import { coreText, lang, t } from './i18n.js';
 import { pickExercise, pickTags } from './pickers.js';
 import * as valueMatrix from './value-matrix.js';
 import { exerciseHash } from './routes.js';
-import { tagGroupLabel } from './terms.js';
+import { tagChipContent, tagGroupLabel, tagLabel } from './terms.js';
 
 const { TAG_GROUPS } = model;
 
@@ -335,7 +335,7 @@ function tagsSection(ctx, id) {
   }
 
   const chip = (tag, n) => h('span', { class: ['chip', n > 1 ? 'chip--new' : ''] },
-    h('span', { class: 'tag' }, tag), n > 1 ? h('span', null, t('detail.times', { count: n })) : null);
+    tagChipContent(tag), n > 1 ? h('span', null, t('detail.times', { count: n })) : null);
 
   function build() {
     const rec = record(ctx, id);
@@ -357,7 +357,7 @@ function tagsSection(ctx, id) {
 
     return [
       dup.length ? notice('warning', t('detail.dupTitle'), h('p', null,
-        t('detail.dup', { count: dup.length, tags: dup.join(', ') }))) : null,
+        t('detail.dup', { count: dup.length, tags: dup.map(tagLabel).join(', ') }))) : null,
       unique.length ? list : h('p', { class: 'muted' }, t('detail.noTags')),
       isPause
         ? h('p', { class: 'small muted' }, t('detail.pauseTags'))

@@ -6,7 +6,7 @@ import * as exerciseDetail from './exercise-detail.js';
 import { coreText, t } from './i18n.js';
 import { registerView } from './registry.js';
 import { exerciseHash } from './routes.js';
-import { tagGroupLabel, tagValueLabel } from './terms.js';
+import { tagGroupLabel, tagLabel } from './terms.js';
 
 const PAGE_SIZE = 50;
 
@@ -43,7 +43,7 @@ function resetFor(ds) {
   Object.assign(state, { ds, criteria: defaultCriteria(), page: 0, lastId: null, returning: false, pendingFocus: null });
 }
 
-const facetLabel = (f, value) => (f.prefix ? tagValueLabel(f.key, value, f.prefix) : value);
+const facetLabel = (f, value) => (f.prefix ? tagLabel(value) : value);
 const without = (c, key) => ({ ...c, [key]: defaultCriteria()[key] });
 
 /** Adds an exercise and opens it with the name field focused. @param {import('./registry.js').Ctx} ctx */
