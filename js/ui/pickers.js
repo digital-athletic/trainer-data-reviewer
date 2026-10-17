@@ -3,7 +3,7 @@ import * as model from '../core/model.js';
 import { haystack } from '../core/query.js';
 import { confirmDialog, debounce, Dialog, fmt, h, notice, uid } from './dom.js';
 import { t } from './i18n.js';
-import { exerciseTagMeta, tagGroupLabel } from './terms.js';
+import { exerciseTagMeta, tagChipContent, tagGroupLabel, tagLabel } from './terms.js';
 
 const MAX_MATCHES = 50;
 const { PAUSE_TAG } = model;
@@ -170,7 +170,8 @@ export function pickTags(ctx, { title = t('pick.editTags'), kind = 'exercise', c
   /** @type {Map<string, string[]>} */
   const groups = Map.groupBy(vocab.keys(), (tag) => model.tagPrefix(tag));
   const prefixes = [...groups.keys()].sort();
-  for (const tags of groups.values()) tags.sort();
+  const labels = new Map([...vocab.keys()].map((tag) => [tag, tagLabel(tag)]));
+  for (const tags of groups.values()) tags.sort((a, b) => labels.get(a).localeCompare(labels.get(b)));
 
   const selectedBox = h('div', { class: 'tag-selected chip-group', 'aria-live': 'polite' });
   const selectedTitle = h('h3', { class: 'section-title' });
@@ -188,10 +189,10 @@ export function pickTags(ctx, { title = t('pick.editTags'), kind = 'exercise', c
     selectedBox.replaceChildren(...(selected.length ? selected : [null]).map((tag) => {
       if (tag === null) return h('span', { class: 'muted small' }, t('pick.noneSelected'));
       return h('span', { class: ['chip', isNew(tag) ? 'chip--new' : 'chip--on'] },
-        h('span', { class: 'tag' }, tag),
+        tagChipContent(tag),
         isNew(tag) ? h('span', null, t('pick.newMark')) : null,
         tag === PAUSE_TAG ? null : h('button', {
-          type: 'button', class: 'chip__remove', 'aria-label': t('pick.remove', { tag }), onclick: () => toggle(tag)
+          type: 'button', class: 'chip__remove', 'aria-label': t('pick.remove', { tag: tagLabel(tag) }), onclick: () => toggle(tag)
         }, '×'));
     }));
   }
@@ -243,8 +244,10 @@ export function pickTags(ctx, { title = t('pick.editTags'), kind = 'exercise', c
 
   function renderGroups() {
     const q = normaliseTag(search.value);
+    const text = search.value.trim().toLocaleLowerCase();
+    const matches = (tag) => tag.includes(q) || labels.get(tag).toLocaleLowerCase().includes(text);
     const sections = prefixes.flatMap((p) => {
-      const tags = q ? groups.get(p).filter((tag) => tag.includes(q)) : groups.get(p);
+      const tags = q ? groups.get(p).filter(matches) : groups.get(p);
       if (!tags.length) return [];
       return [h('section', null,
         h('h4', { class: 'tag-group__title' },
@@ -253,7 +256,7 @@ export function pickTags(ctx, { title = t('pick.editTags'), kind = 'exercise', c
         h('div', { class: 'chip-group' }, tags.map((tag) => h('button', {
           type: 'button', class: 'chip', dataset: { tag }, 'aria-pressed': String(selected.includes(tag))
         },
-          h('span', { class: 'tag' }, tag),
+          tagChipContent(tag),
           h('span', { class: 'chip__count' }, fmt(vocab.get(tag)))))))];
     });
     groupsBox.replaceChildren(...(sections.length ? sections : [h('p', { class: 'muted small' }, t('pick.noTag', { q }))]));
